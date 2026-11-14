@@ -7,8 +7,7 @@ __pycache__/
 .env
 .openminion/
 .openminion-state/
-artifacts/*.mp4
-artifacts/frames/
+artifacts/
 .scratch/
 *.egg-info/
 dist/
