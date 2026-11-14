@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -157,3 +158,93 @@ def assert_read_only_tools(tools: Iterable[Any]) -> list[Any]:
             )
         validated.append(item)
     return validated
+
+
+def _append_publication_record(
+    *,
+    log_path: Path,
+    claim_id: str,
+    final_verdict: str,
+    agreement_score: float,
+    mean_confidence: float,
+    requires_human_review: bool,
+    session_id: str,
+    summary: str,
+) -> dict[str, Any]:
+    record = {
+        "claim_id": claim_id,
+        "final_verdict": final_verdict,
+        "agreement_score": round(float(agreement_score), 6),
+        "mean_confidence": round(float(mean_confidence), 6),
+        "requires_human_review": bool(requires_human_review),
+        "session_id": session_id,
+        "summary": summary,
+        "published_at": datetime.now(timezone.utc).isoformat(),
+    }
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    return {"published": True, "log_path": str(log_path), **record}
+
+
+@tool(
+    name="publish_consensus_verdict",
+    min_scope="WRITE_SAFE",
+    dangerous=True,
+    idempotent=False,
+)
+def publish_consensus_verdict(
+    claim_id: str,
+    final_verdict: str,
+    agreement_score: float,
+    mean_confidence: float,
+    requires_human_review: bool = False,
+    session_id: str = "",
+    summary: str = "",
+    log_path: str = ".openminion-state/published_verdicts.jsonl",
+) -> dict[str, Any]:
+    """Publish a verified ConsensusVerdict to an isolated JSONL log (approval-gated)."""
+    return _append_publication_record(
+        log_path=Path(log_path),
+        claim_id=claim_id,
+        final_verdict=final_verdict,
+        agreement_score=agreement_score,
+        mean_confidence=mean_confidence,
+        requires_human_review=requires_human_review,
+        session_id=session_id,
+        summary=summary,
+    )
+
+
+def make_publish_consensus_verdict_tool(log_path: str | Path) -> Any:
+    """Create a path-bound dangerous WRITE_SAFE publication tool for Handoff publisher agents."""
+    target_path = Path(log_path)
+
+    @tool(
+        name="publish_consensus_verdict",
+        min_scope="WRITE_SAFE",
+        dangerous=True,
+        idempotent=False,
+    )
+    def _bound_publish_consensus_verdict(
+        claim_id: str,
+        final_verdict: str,
+        agreement_score: float,
+        mean_confidence: float,
+        requires_human_review: bool = False,
+        session_id: str = "",
+        summary: str = "",
+    ) -> dict[str, Any]:
+        """Publish a verified ConsensusVerdict to the bound publication log."""
+        return _append_publication_record(
+            log_path=target_path,
+            claim_id=claim_id,
+            final_verdict=final_verdict,
+            agreement_score=agreement_score,
+            mean_confidence=mean_confidence,
+            requires_human_review=requires_human_review,
+            session_id=session_id,
+            summary=summary,
+        )
+
+    return _bound_publish_consensus_verdict
