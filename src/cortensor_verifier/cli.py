@@ -10,6 +10,11 @@ from typing import Sequence
 from openminion.api import AgentOutputValidationError, ProviderError
 
 from cortensor_verifier.auditor import ConsensusAuditor
+from cortensor_verifier.probe import (
+    BuildingBlockProbeRunner,
+    assert_no_plaintext_secrets,
+    export_probe_docs,
+)
 from cortensor_verifier.runtime_factory import PROVIDER_PRESETS
 from cortensor_verifier.tools import load_claim_dossier, load_dossier_from_file
 
@@ -127,6 +132,64 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         help="Optional file path to write the AuditRunBundle JSON.",
     )
+
+    probe_parser = subparsers.add_parser(
+        "probe",
+        help="Run all 10 OpenMinion 0.1 building-block probes and optionally export docs.",
+    )
+    probe_parser.add_argument(
+        "--preset",
+        choices=PROVIDER_PRESETS,
+        default="openai-compatible",
+        help="Provider runtime preset.",
+    )
+    probe_parser.add_argument("--base-url", help="Override provider base URL.")
+    probe_parser.add_argument("--model", help="Override model name.")
+    probe_parser.add_argument(
+        "--api-key-env",
+        help="Environment variable name holding the provider API key.",
+    )
+    probe_parser.add_argument(
+        "--home-root",
+        help="Isolated home directory for .openminion/agents.json.",
+    )
+    probe_parser.add_argument(
+        "--data-root",
+        help="Isolated state root directory (.openminion-state).",
+    )
+    probe_parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Maximum provider retry attempts per turn.",
+    )
+    probe_parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=15,
+        help="Provider HTTP timeout in seconds.",
+    )
+    probe_parser.add_argument(
+        "--probes",
+        nargs="+",
+        help="Optional subset of building-block probe IDs to execute (default: all 10).",
+    )
+    probe_parser.add_argument(
+        "--export-docs",
+        action="store_true",
+        default=False,
+        help="Write sanitized BUILDING_BLOCKS_TESTED.md and WHAT_WE_LEARNED.md.",
+    )
+    probe_parser.add_argument(
+        "--docs-dir",
+        default="docs",
+        help="Target directory for --export-docs output (default: docs).",
+    )
+    probe_parser.add_argument(
+        "-o",
+        "--output",
+        help="Optional file path to write the ProbeSuiteReport JSON.",
+    )
     return parser
 
 
@@ -167,6 +230,39 @@ def _run_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_probe(args: argparse.Namespace) -> int:
+    runner = BuildingBlockProbeRunner(
+        preset=args.preset,
+        base_url=args.base_url,
+        model=args.model,
+        api_key_env=args.api_key_env,
+        home_root=args.home_root,
+        data_root=args.data_root,
+        provider_retry_max_attempts=args.max_retries,
+        timeout_seconds=args.timeout_seconds,
+        probe_ids=args.probes,
+    )
+    report = runner.run_all()
+    if args.export_docs:
+        export_probe_docs(
+            report,
+            docs_dir=args.docs_dir,
+            secret_env_names=[args.api_key_env] if args.api_key_env else None,
+        )
+
+    rendered = report.model_dump_json(indent=2)
+    assert_no_plaintext_secrets(
+        rendered,
+        secret_env_names=[args.api_key_env] if args.api_key_env else None,
+    )
+    if args.output:
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(rendered + "\n", encoding="utf-8")
+    print(rendered)
+    return 0 if report.all_passed else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint returning process exit status."""
     parser = build_parser()
@@ -174,6 +270,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "audit":
             return _run_audit(args)
+        if args.command == "probe":
+            return _run_probe(args)
         parser.error(f"Unsupported command: {args.command}")
     except (
         AgentOutputValidationError,
