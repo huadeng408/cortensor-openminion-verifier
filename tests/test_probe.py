@@ -21,6 +21,8 @@ from cortensor_verifier.probe import (
     assert_no_plaintext_secrets,
     build_empirical_dx_findings,
     export_probe_docs,
+    infer_calibration_status,
+    sanitize_base_url,
 )
 from tests.conftest import (
     LoopbackLLMServer,
@@ -711,3 +713,22 @@ def test_cli_probe_returns_nonzero_when_probe_fails(
     parsed = ProbeSuiteReport.model_validate_json(captured.out)
     assert parsed.total_probes == 1
     assert parsed.failed_probes == 1
+
+
+def test_sanitize_base_url_redacts_third_party_relay_hosts_while_keeping_official_hosts() -> None:
+    private_sanitized = sanitize_base_url("https://private-relay.example.org:8443/v1?token=abc")
+    assert private_sanitized == "https://<configured-openai-compatible-relay>/v1"
+    assert "private-relay.example.org" not in private_sanitized
+    assert infer_calibration_status(private_sanitized) == "[Live LLM Calibrated]"
+
+    loopback = sanitize_base_url("http://127.0.0.1:51234/v1")
+    assert loopback == "http://127.0.0.1:51234/v1"
+    assert infer_calibration_status(loopback) == "[Loopback Stub Baseline — awaiting C4 live LLM calibration]"
+
+    cortensor = sanitize_base_url("https://router.cortensor.network/v1")
+    assert cortensor == "https://router.cortensor.network/v1"
+    assert infer_calibration_status(cortensor) == "[Live LLM Calibrated]"
+
+    openai_official = sanitize_base_url("https://api.openai.com/v1")
+    assert openai_official == "https://api.openai.com/v1"
+    assert infer_calibration_status(openai_official) == "[Live LLM Calibrated]"
