@@ -187,35 +187,6 @@ def _append_publication_record(
     return {"published": True, "log_path": str(log_path), **record}
 
 
-@tool(
-    name="publish_consensus_verdict",
-    min_scope="WRITE_SAFE",
-    dangerous=True,
-    idempotent=False,
-)
-def publish_consensus_verdict(
-    claim_id: str,
-    final_verdict: str,
-    agreement_score: float,
-    mean_confidence: float,
-    requires_human_review: bool = False,
-    session_id: str = "",
-    summary: str = "",
-    log_path: str = ".openminion-state/published_verdicts.jsonl",
-) -> dict[str, Any]:
-    """Publish a verified ConsensusVerdict to an isolated JSONL log (approval-gated)."""
-    return _append_publication_record(
-        log_path=Path(log_path),
-        claim_id=claim_id,
-        final_verdict=final_verdict,
-        agreement_score=agreement_score,
-        mean_confidence=mean_confidence,
-        requires_human_review=requires_human_review,
-        session_id=session_id,
-        summary=summary,
-    )
-
-
 def make_publish_consensus_verdict_tool(log_path: str | Path) -> Any:
     """Create a path-bound dangerous WRITE_SAFE publication tool for Handoff publisher agents."""
     target_path = Path(log_path)
@@ -248,3 +219,8 @@ def make_publish_consensus_verdict_tool(log_path: str | Path) -> Any:
         )
 
     return _bound_publish_consensus_verdict
+
+
+publish_consensus_verdict = make_publish_consensus_verdict_tool(
+    ".openminion-state/published_verdicts.jsonl"
+)

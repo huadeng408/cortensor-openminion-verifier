@@ -167,8 +167,21 @@ def _smart_probe_step(request_body: dict[str, Any]) -> dict[str, Any]:
         content = str(tool_msgs[-1].get("content", "")) if tool_msgs else "missing"
         return text_step(f"AUTO_TOOL_OK: {content}")
 
-    if "PROBE_POLICY_ALLOW" in last_user or "PROBE_POLICY_DENY" in last_user:
-        att_id = "att-allow" if "PROBE_POLICY_ALLOW" in last_user else "att-deny"
+    if (
+        "PROBE_POLICY_ALLOW" in last_user
+        or "PROBE_POLICY_DENY" in last_user
+        or "PROBE_POLICY_PAUSE" in last_user
+        or (
+            last_user.strip().lower() == "allow_once"
+            and any("PROBE_POLICY_PAUSE" in um for um in user_messages)
+        )
+    ):
+        if "PROBE_POLICY_ALLOW" in last_user:
+            att_id = "att-allow"
+        elif "PROBE_POLICY_DENY" in last_user:
+            att_id = "att-deny"
+        else:
+            att_id = "att-pause-resume"
         if not tool_msgs and "probe_publish_attestation" in available_tools:
             return tool_calls_step(
                 {
@@ -431,6 +444,11 @@ def test_probe_runner_executes_all_ten_building_blocks_against_real_runtime(
     assert by_id["structured_pydantic_output"].metadata["negative_validation_error"] is True
     assert by_id["policy_confirmation_gate"].metadata["allow_executed"] is True
     assert by_id["policy_confirmation_gate"].metadata["deny_blocked"] is True
+    assert by_id["policy_confirmation_gate"].metadata["pause_blocked"] is True
+    assert by_id["policy_confirmation_gate"].metadata["resume_executed"] is True
+    assert by_id["policy_confirmation_gate"].metadata["paused_thread_id"]
+    assert by_id["policy_confirmation_gate"].metadata["pending_confirmation_id"]
+    assert "att-pause-resume" in by_id["policy_confirmation_gate"].metadata["executed_ids"]
     assert by_id["session_continuity"].metadata["same_session_recalled"] is True
     assert by_id["session_continuity"].metadata["second_session_isolated"] is True
     assert by_id["session_continuity"].metadata["thread_id"]
@@ -444,6 +462,14 @@ def test_probe_runner_executes_all_ten_building_blocks_against_real_runtime(
     assert by_id["error_and_timeout_contracts"].metadata["http_500_attempts"] >= 2
     assert by_id["error_and_timeout_contracts"].metadata["timeout_raised"] is True
     assert by_id["error_and_timeout_contracts"].metadata["http_connection_reuse_enabled"] is False
+    wire = by_id["error_and_timeout_contracts"].metadata["provider_wire_formats"]
+    assert wire["anthropic_path"] == "/anthropic/v1/messages"
+    assert wire["anthropic_x_api_key"] is True
+    assert wire["anthropic_version_header"] is True
+    assert wire["cortensor_path"] == "/cortensor/api/v2/completions"
+    assert wire["cortensor_bearer_auth"] is True
+    assert wire["openai_sse_usage_without_vendor"] is False
+    assert wire["openai_sse_usage_with_vendor"] is True
 
     forced_reqs = [
         req
@@ -477,90 +503,51 @@ def test_probe_runner_executes_all_ten_building_blocks_against_real_runtime(
     assert handoff_reqs
 
 
-def test_probe_loopback_server_handles_sse_streaming_and_closure_judgment(
+def test_probe_dx_findings_reflect_only_executed_and_passed_probes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
     probe_server: ProbeLoopbackServer,
 ) -> None:
-    from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
-    from openminion.modules.llm.schemas import LLMRequest, Message
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-subset-probe-key-999")
+    subset_runner = BuildingBlockProbeRunner(
+        preset="openai-compatible",
+        base_url=probe_server.base_url,
+        model="stub-model",
+        api_key_env="OPENAI_API_KEY",
+        home_root=tmp_path / "subset-home",
+        data_root=tmp_path / "subset-state",
+        probe_ids=["agent_runtime_isolation", "policy_confirmation_gate"],
+    )
+    subset_report = subset_runner.run_all()
+    assert subset_report.total_probes == 2
+    assert subset_report.passed_probes == 2
+    assert len(subset_report.dx_findings) == 2
 
-    provider = OpenAIProvider()
-    try:
-        # With service_vendor='openai', OpenAIProvider.stream preserves usage on done events.
-        events_with_vendor = list(
-            provider.stream(
-                LLMRequest(messages=[Message(role="user", content="PROBE_STREAM_TURN")]),
-                {
-                    "model": "stub-model",
-                    "base_url": probe_server.base_url,
-                    "api_key": "test-sse-key",
-                    "http_connection_reuse_enabled": False,
-                    "provider_identity": {"service_vendor": "openai"},
-                },
-            )
+    findings_blob = json.dumps(subset_report.dx_findings)
+    assert "pause_blocked=True" in findings_blob
+    assert "resume_executed=True" in findings_blob
+    assert "AnthropicProvider" not in findings_blob
+    assert "FreshnessContract" not in findings_blob
+
+    assert (
+        build_empirical_dx_findings(
+            [
+                ProbeCheckResult(
+                    probe_id="structured_pydantic_output",
+                    name="Block 2",
+                    passed=False,
+                    detail="Simulated failure",
+                ),
+                ProbeCheckResult(
+                    probe_id="error_and_timeout_contracts",
+                    name="Block 10",
+                    passed=False,
+                    detail="Simulated failure",
+                ),
+            ]
         )
-        # Default loopback (preserve_response_facts=False) still streams text deltas + done.
-        events_default = list(
-            provider.stream(
-                LLMRequest(messages=[Message(role="user", content="PROBE_STREAM_TURN")]),
-                {
-                    "model": "stub-model",
-                    "base_url": probe_server.base_url,
-                    "api_key": "test-sse-key",
-                    "http_connection_reuse_enabled": False,
-                },
-            )
-        )
-    finally:
-        provider.close()
-
-    delta_text = "".join(evt.delta_text or "" for evt in events_with_vendor if evt.type == "delta")
-    assert "STREAM_TELEMETRY_OK" in delta_text
-    assert any(
-        evt.type == "done" and evt.usage is not None and evt.usage.input_tokens == 12
-        for evt in events_with_vendor
+        == []
     )
-    assert "STREAM_TELEMETRY_OK" in "".join(
-        evt.delta_text or "" for evt in events_default if evt.type == "delta"
-    )
-    assert any(evt.type == "done" for evt in events_default)
-
-    closure_json_step = _probe_internal_classifier_step(
-        {
-            "tool_choice": {"type": "function", "function": {"name": "submit_output"}},
-            "tools": [{"function": {"parameters": {"title": "ClosureJudgment"}}}],
-            "messages": [
-                {
-                    "role": "user",
-                    "content": '{"closure_action_summary": "{\\"status\\": \\"OK\\"}"}',
-                }
-            ],
-        }
-    )
-    assert closure_json_step is not None
-    assert closure_json_step["calls"][0]["arguments"]["final_answer"] == '{"status": "OK"}'
-
-    closure_ctx_step = _probe_internal_classifier_step(
-        {
-            "tool_choice": {"type": "function", "function": {"name": "submit_output"}},
-            "tools": [{"function": {"parameters": {"title": "ClosureJudgment"}}}],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "[JUDGE CONTEXT]\n"
-                        "candidate_reason: act_adaptive_final_text\n"
-                        'action_summary: {"status": "OK", "block": "subagent_delegation", "score": 0.97}\n'
-                        "closure_action_outputs: {}"
-                    ),
-                }
-            ],
-        }
-    )
-    assert closure_ctx_step is not None
-    args = closure_ctx_step["calls"][0]["arguments"]
-    assert args["satisfied"] is True
-    assert args["next_action"] == "close"
-    assert args["final_answer"] == '{"status": "OK", "block": "subagent_delegation", "score": 0.97}'
 
 
 def test_probe_doc_export_scrubs_secrets_and_fails_closed(

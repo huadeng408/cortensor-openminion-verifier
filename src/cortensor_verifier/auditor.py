@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Callable, Iterator, Literal, Sequence
 from uuid import uuid4
 
 from openminion.api import APIRuntime, Agent, AgentRunResult, Handoff, subagent
@@ -185,12 +186,14 @@ def _pass_telemetry_from_run(
         tool_calls=tool_calls,
         tool_errors=tool_errors,
     )
+    retries = int(stats.get("retries") or meta.get("retries") or meta.get("provider_retries") or 0)
+    queue_wait_ms = int(stats.get("queue_wait_ms") or meta.get("queue_wait_ms") or 0)
     turn_tel = TurnTelemetry(
         tokens_in=prompt_tokens,
         tokens_out=completion_tokens,
         duration_ms=latency_ms,
-        retries=0,
-        queue_wait_ms=0,
+        retries=retries,
+        queue_wait_ms=queue_wait_ms,
     )
     return pass_tel, turn_tel
 
@@ -317,22 +320,25 @@ class ConsensusAuditor:
             base = Path(self.data_root)
         else:
             base = Path(self._ensure_runtime().data_root)
-        return base / ".openminion-state"
+        return base if base.name == ".openminion-state" else base / ".openminion-state"
 
     def _ensure_publisher_runtime(self) -> APIRuntime:
         if self._publisher_runtime is None:
             pub_root = self._state_root() / "publisher_runtime"
             runtime = self._ensure_runtime()
             cfg = getattr(runtime, "config", None)
-            base_url = self.base_url
-            model = self.model
-            if base_url is None and cfg is not None:
-                providers = getattr(cfg, "providers", None)
-                openai_cfg = getattr(providers, "openai", None) if providers else None
-                base_url = getattr(openai_cfg, "base_url", None)
-            if model is None and cfg is not None:
-                llm_cfg = getattr(cfg, "llm", None)
-                model = getattr(llm_cfg, "model", None)
+            providers = getattr(cfg, "providers", None) if cfg is not None else None
+            prov_cfg = (
+                (
+                    getattr(providers, "cortensor", None)
+                    if self.preset == "cortensor-router"
+                    else getattr(providers, "openai", None)
+                )
+                if providers is not None
+                else None
+            )
+            base_url = self.base_url or getattr(prov_cfg, "base_url", None)
+            model = self.model or getattr(prov_cfg, "model", None)
             self._publisher_runtime = create_isolated_runtime(
                 preset=self.preset,
                 base_url=base_url,
@@ -494,6 +500,7 @@ class ConsensusAuditor:
         dossier: ClaimDossier,
         consensus: ConsensusVerdict,
         run_id: str | None,
+        pass_session_ids: Sequence[str] | None = None,
         memory_bundle_out: str | Path | None = None,
     ) -> MemoryBundle | None:
         if session_id is None and memory_bundle_out is None:
@@ -509,11 +516,22 @@ class ConsensusAuditor:
                     citations.append(c.model_dump(mode="json"))
 
         effective_session = session_id or "ephemeral"
+        existing_bundle = (
+            self.export_session_memory(effective_session) if session_id is not None else None
+        )
         existing_items: list[dict[str, Any]] = (
-            list(self.export_session_memory(effective_session).items)
-            if session_id is not None
+            list(existing_bundle.items) if existing_bundle is not None else []
+        )
+        prior_pass_sids = list(
+            (existing_bundle.metadata or {}).get("pass_session_ids", [])
+            if existing_bundle is not None
             else []
         )
+        merged_pass_sids: list[str] = []
+        for sid in [*prior_pass_sids, *(pass_session_ids or [])]:
+            if isinstance(sid, str) and sid and sid not in merged_pass_sids:
+                merged_pass_sids.append(sid)
+
         turn_index = len(existing_items) + 1
         citation_summary = "; ".join(
             f"[{c['source_id']}] {c['title']}: {c['excerpt']}" for c in citations
@@ -548,6 +566,7 @@ class ConsensusAuditor:
                 "session_id": effective_session,
                 "item_count": len(items),
                 "claim_ids": [str(entry.get("claim_id", "")) for entry in items],
+                "pass_session_ids": merged_pass_sids,
             },
         )
         if session_id is not None:
@@ -565,7 +584,21 @@ class ConsensusAuditor:
             return ""
         bundle = self.export_session_memory(session_id)
         runtime = self._ensure_runtime()
-        session_msgs = runtime.sessions.list_messages(session_id=session_id)
+        recorded_sids = list(
+            dict.fromkeys(
+                [
+                    session_id,
+                    *[
+                        str(sid)
+                        for sid in (bundle.metadata or {}).get("pass_session_ids", [])
+                        if sid
+                    ],
+                ]
+            )
+        )
+        session_msgs: list[Any] = []
+        for sid in recorded_sids:
+            session_msgs.extend(runtime.sessions.list_messages(session_id=sid))
         if not bundle.items and not session_msgs:
             return ""
 
@@ -710,6 +743,7 @@ class ConsensusAuditor:
             tools=list(self.tools),
         )
         outcomes: list[tuple[str, VerifierPassResult, AgentRunResult[VerifierPassResult]]] = []
+        turn_timeout = self._turn_timeout()
         for role in ("corroborator", "skeptic"):
             child = subagent(
                 coordinator,
@@ -718,21 +752,44 @@ class ConsensusAuditor:
                 instructions=self._build_instructions(role),
                 tools=list(self.tools),
                 output_type=VerifierPassResult,
-                timeout_seconds=(
-                    max(90, int(self.timeout_seconds))
-                    if self.timeout_seconds is not None
-                    else None
-                ),
+                timeout_seconds=int(turn_timeout) if turn_timeout is not None else None,
             )
             pass_session_id = f"{session_id}:{role}:{uuid4().hex[:8]}" if session_id else None
             run_result = child.run(
                 self._build_prompt(dossier, role, session_context=session_context),
                 session_id=pass_session_id,
                 approval_callback=self._read_only_approval_guard,
-                timeout_seconds=self._turn_timeout(),
+                timeout_seconds=turn_timeout,
             )
             outcomes.append((role, self._coerce_pass_result(run_result, role), run_result))
         return outcomes
+
+    @contextmanager
+    def _with_publisher_allow_once_grant(
+        self,
+        *,
+        approval_id: str,
+        reason: str,
+    ) -> Iterator[str]:
+        """Issue a scoped single-use PolicyGrantInput on publisher runtime and revoke on exit."""
+        pub_rt = self._ensure_publisher_runtime()
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        grant_id = pub_rt.action_policy.create_grant(
+            PolicyGrantInput(
+                effect="allow",
+                tool="publish_consensus_verdict",
+                method="*",
+                duration_type="until",
+                expires_at=expires_at,
+                max_uses=1,
+                approval_id=approval_id,
+                reason=reason,
+            )
+        )
+        try:
+            yield grant_id
+        finally:
+            pub_rt.action_policy.revoke_grant(grant_id)
 
     def _resolve_log_path(self, publication_log_path: str | Path | None) -> Path:
         if publication_log_path is not None:
@@ -887,20 +944,6 @@ class ConsensusAuditor:
                 )
 
             self._mark_approval_used(eff_approval_id)
-            pub_rt = self._ensure_publisher_runtime()
-            expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-            grant_id = pub_rt.action_policy.create_grant(
-                PolicyGrantInput(
-                    effect="allow",
-                    tool="publish_consensus_verdict",
-                    method="*",
-                    duration_type="until",
-                    expires_at=expires_at,
-                    max_uses=1,
-                    approval_id=eff_approval_id,
-                    reason="allow_once_handoff_publication",
-                )
-            )
             cb_state = {"calls": 0, "denied": False}
 
             def _single_use_cb(tool_name: str, args: dict[str, Any], cmd_id: str) -> bool:
@@ -917,15 +960,16 @@ class ConsensusAuditor:
 
             coord = self._build_handoff_coordinator(log_path=log_path)
             before_lines = self._log_line_count(log_path)
-            try:
+            with self._with_publisher_allow_once_grant(
+                approval_id=eff_approval_id,
+                reason="allow_once_handoff_publication",
+            ):
                 coord_res = coord.run(
                     pub_prompt,
                     session_id=pub_session_id,
                     approval_callback=_single_use_cb,
                     timeout_seconds=self._turn_timeout(),
                 )
-            finally:
-                pub_rt.action_policy.revoke_grant(grant_id)
 
             after_lines = self._log_line_count(log_path)
             wrote_record = after_lines > before_lines and not cb_state["denied"]
@@ -1190,30 +1234,17 @@ class ConsensusAuditor:
             )
 
         self._mark_approval_used(replay_key)
-        pub_rt = self._ensure_publisher_runtime()
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-        grant_id = pub_rt.action_policy.create_grant(
-            PolicyGrantInput(
-                effect="allow",
-                tool="publish_consensus_verdict",
-                method="*",
-                duration_type="until",
-                expires_at=expires_at,
-                max_uses=1,
-                approval_id=str(snap_approval_id),
-                reason="resume_allow_once_handoff",
-            )
-        )
         before_lines = self._log_line_count(log_path)
-        try:
+        with self._with_publisher_allow_once_grant(
+            approval_id=str(snap_approval_id),
+            reason="resume_allow_once_handoff",
+        ):
             res_run = coord.run(
                 "allow_once",
                 session_id=pub_session_id,
                 thread_id=thread_id,
                 timeout_seconds=self._turn_timeout(),
             )
-        finally:
-            pub_rt.action_policy.revoke_grant(grant_id)
 
         after_lines = self._log_line_count(log_path)
         wrote_record = after_lines > before_lines
@@ -1266,32 +1297,11 @@ class ConsensusAuditor:
             },
         )
 
-    def audit_single_pass(
-        self,
-        dossier: ClaimDossier,
-        *,
-        pass_role: str = "primary",
-        instructions: str | None = None,
-        forced_tools: list[str] | None = None,
-        session_id: str | None = None,
-    ) -> VerifierPassResult:
-        """Run a single READ_ONLY verifier pass and return VerifierPassResult."""
-        session_context = self._build_session_context_block(session_id)
-        output, _ = self._execute_single_pass(
-            dossier,
-            pass_role=pass_role,
-            instructions=instructions,
-            forced_tools=forced_tools,
-            session_id=session_id,
-            session_context=session_context,
-        )
-        return output
-
     def audit_claim(
         self,
         dossier: ClaimDossier,
         *,
-        single_pass: bool = True,
+        single_pass: bool = False,
         session_id: str | None = None,
         thread_id: str | None = None,
         publish: bool = False,
@@ -1301,11 +1311,24 @@ class ConsensusAuditor:
         publication_log_path: str | Path | None = None,
         memory_bundle_out: str | Path | None = None,
     ) -> AuditRunBundle:
-        """Run single-pass or dual-pass consensus verification with optional Handoff publication."""
-        if thread_id is not None and self._load_paused_thread_snapshot(thread_id) is not None:
+        """Run dual-pass (or single-pass) consensus verification with optional Handoff publication."""
+        if thread_id is not None:
+            if approval_mode is not None:
+                resolved_mode: ApprovalModeLiteral = approval_mode
+            elif approval_callback is not None:
+                approved = bool(
+                    approval_callback(
+                        "transfer_to_publisher",
+                        {"thread_id": thread_id, "claim_id": dossier.claim_id},
+                        approval_id or thread_id,
+                    )
+                )
+                resolved_mode = "allow_once" if approved else "deny"
+            else:
+                resolved_mode = "pause"
             return self.resume_publication(
                 thread_id=thread_id,
-                approval_mode=approval_mode or "allow_once",
+                approval_mode=resolved_mode,
                 approval_id=approval_id,
                 publication_log_path=publication_log_path,
                 memory_bundle_out=memory_bundle_out,
@@ -1343,11 +1366,13 @@ class ConsensusAuditor:
             primary_run = pass_outcomes[-1][2]
 
         telemetry = _aggregate_telemetry(telemetry_runs)
+        pass_session_ids = [run.session_id for _, run in telemetry_runs if run.session_id]
         saved_bundle = self._persist_session_memory(
             session_id=session_id,
             dossier=dossier,
             consensus=consensus,
             run_id=primary_run.run_id,
+            pass_session_ids=pass_session_ids,
             memory_bundle_out=memory_bundle_out,
         )
 

@@ -121,6 +121,7 @@ def test_cli_audit_by_dossier_file_with_cortensor_portal_preset(
             "cortensor-portal",
             "--base-url",
             loopback_server.base_url,
+            "--single-pass",
             "--home-root",
             str(tmp_path / "home"),
             "--data-root",
@@ -152,6 +153,7 @@ def test_cli_audit_returns_nonzero_on_provider_and_validation_failures(
             "delphi-eth-dencun-blobs",
             "--base-url",
             loopback_server.base_url,
+            "--single-pass",
             "--home-root",
             str(tmp_path / "h1"),
             "--data-root",
@@ -172,6 +174,7 @@ def test_cli_audit_returns_nonzero_on_provider_and_validation_failures(
             "delphi-eth-dencun-blobs",
             "--base-url",
             loopback_server.base_url,
+            "--single-pass",
             "--home-root",
             str(tmp_path / "h2"),
             "--data-root",
@@ -183,3 +186,58 @@ def test_cli_audit_returns_nonzero_on_provider_and_validation_failures(
     assert rc_provider != 0
     err2 = capsys.readouterr().err
     assert "provider" in err2.lower() or "error" in err2.lower()
+
+
+def test_cli_audit_defaults_to_dual_pass_without_single_pass_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    loopback_server: LoopbackLLMServer,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "cli-test-openai-token")
+    citation = {
+        "source_id": "sec-spot-btc-2024-01-10",
+        "title": "Statement on the Approval of Spot Bitcoin Exchange-Traded Products",
+        "excerpt": "approved the listing and trading of spot bitcoin ETP shares.",
+    }
+    loopback_server.enqueue(
+        json_step(
+            {
+                "verdict": "SUPPORTED",
+                "confidence": 0.93,
+                "rationale": "Corroborator pass verified order.",
+                "citations": [citation],
+                "pass_role": "corroborator",
+            }
+        ),
+        json_step(
+            {
+                "verdict": "SUPPORTED",
+                "confidence": 0.89,
+                "rationale": "Skeptic pass found no contradicting filing.",
+                "citations": [citation],
+                "pass_role": "skeptic",
+            }
+        ),
+    )
+
+    rc = main(
+        [
+            "audit",
+            "--claim-id",
+            "delphi-btc-etf-2024",
+            "--preset",
+            "openai-compatible",
+            "--base-url",
+            loopback_server.base_url,
+            "--home-root",
+            str(tmp_path / "dual-home"),
+            "--data-root",
+            str(tmp_path / "dual-state"),
+        ]
+    )
+    assert rc == 0
+    bundle = AuditRunBundle.model_validate_json(capsys.readouterr().out)
+    assert len(bundle.consensus.passes) == 2
+    assert [p.pass_role for p in bundle.consensus.passes] == ["corroborator", "skeptic"]
+    assert bundle.consensus.final_verdict == "SUPPORTED"

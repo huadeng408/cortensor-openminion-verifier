@@ -51,13 +51,13 @@ _SCENE_TITLES: tuple[tuple[str, str], ...] = (
 )
 
 _SCENE_CAPTIONS: tuple[str, ...] = (
-    "Single-pass LLMs hallucinate & leak side effects. OpenMinion isolates credentials, policies, and subagents cleanly.",
-    "Only min_scope='READ_ONLY' @tool functions are registered on verifier passes — zero workspace writes possible.",
-    "Two independent subagent() passes inspect the same Claim Dossier with zero shared reasoning leaks.",
-    "synthesize_consensus() fuses corroborator + skeptic verdicts, agreement_score, and portable MemoryBundle JSON.",
-    "External publication routes via Handoff pause -> thread_id snapshot -> single-use PolicyGrantInput(max_uses=1).",
-    "All 10 OpenMinion 0.1 building blocks verified end-to-end against real APIRuntime and live LLM inference.",
-    "Reproduce every audit, probe matrix, and captioned 1080p walkthrough offline or live with one CLI command.",
+    "Single-pass LLMs hallucinate & leak side effects; OpenMinion isolates credentials, policies, and subagents. | 单轮模型易幻觉与越权，OpenMinion 隔离凭据、策略与子代理。",
+    "Only min_scope='READ_ONLY' @tool functions bind to verifier passes — zero workspace writes possible. | 核查阶段仅注册 READ_ONLY 工具，从接口层阻断本地写入。",
+    "Two independent subagent() passes inspect the Claim Dossier with zero shared reasoning leaks. | 独立 corroborator 与 skeptic 双子代理背靠背交叉核验声明。",
+    "synthesize_consensus() fuses dual verdicts, agreement_score, and portable MemoryBundle JSON. | 融合双路径裁决与一致度分数，并导出跨会话记忆快照。",
+    "External publication routes via Handoff pause -> thread_id snapshot -> PolicyGrantInput(max_uses=1). | 外部发布经 Handoff 审批暂停与单次授权门禁后方可落盘。",
+    "All 10 OpenMinion 0.1 building blocks verified end-to-end against real APIRuntime and live inference. | 10 项 OpenMinion 0.1 核心积木全部通过真实运行时端到端实测。",
+    "Reproduce every audit, probe matrix, and captioned 1080p walkthrough offline or live with one CLI command. | 一条 CLI 命令即可离线或联网复现全量核验、探针矩阵与 1080p 演示。",
 )
 
 
@@ -133,11 +133,33 @@ def load_demo_inputs(
 def _load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     candidates: list[Path]
     win_fonts = Path(r"C:\Windows\Fonts")
+    linux_fonts = (
+        Path("/usr/share/fonts/opentype/noto"),
+        Path("/usr/share/fonts/truetype/noto"),
+        Path("/usr/share/fonts/truetype/wqy"),
+        Path("/usr/share/fonts/truetype/dejavu"),
+        Path("/usr/share/fonts"),
+    )
+    mac_fonts = (
+        Path("/System/Library/Fonts"),
+        Path("/System/Library/Fonts/Supplemental"),
+        Path("/Library/Fonts"),
+    )
     if mono:
         candidates = [
             win_fonts / ("consolab.ttf" if bold else "consola.ttf"),
             win_fonts / "msyh.ttc",
             win_fonts / "arial.ttf",
+            *(
+                p / name
+                for p in linux_fonts
+                for name in (
+                    "DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf",
+                    "NotoSansMono-Regular.ttf",
+                    "NotoSansCJK-Regular.ttc",
+                )
+            ),
+            *(p / name for p in mac_fonts for name in ("Menlo.ttc", "Monaco.ttf", "Courier New.ttf")),
         ]
     elif bold:
         candidates = [
@@ -145,12 +167,43 @@ def _load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFon
             win_fonts / "simhei.ttf",
             win_fonts / "segoeuib.ttf",
             win_fonts / "arialbd.ttf",
+            *(
+                p / name
+                for p in linux_fonts
+                for name in (
+                    "NotoSansCJK-Bold.ttc",
+                    "NotoSerifCJK-Bold.ttc",
+                    "wqy-zenhei.ttc",
+                    "DejaVuSans-Bold.ttf",
+                )
+            ),
+            *(
+                p / name
+                for p in mac_fonts
+                for name in ("PingFang.ttc", "STHeiti Medium.ttc", "Arial Bold.ttf", "Helvetica.ttc")
+            ),
         ]
     else:
         candidates = [
             win_fonts / "msyh.ttc",
             win_fonts / "segoeui.ttf",
             win_fonts / "arial.ttf",
+            *(
+                p / name
+                for p in linux_fonts
+                for name in (
+                    "NotoSansCJK-Regular.ttc",
+                    "NotoSansSC-Regular.otf",
+                    "wqy-microhei.ttc",
+                    "wqy-zenhei.ttc",
+                    "DejaVuSans.ttf",
+                )
+            ),
+            *(
+                p / name
+                for p in mac_fonts
+                for name in ("PingFang.ttc", "STHeiti Light.ttc", "Arial.ttf", "Helvetica.ttc")
+            ),
         ]
 
     for font_path in candidates:
@@ -176,7 +229,22 @@ def _wrap_text(
 
     lines: list[str] = []
     current = ""
-    tokens = clean.split(" ")
+    raw_tokens = clean.split(" ")
+    tokens: list[str] = []
+    for raw_tok in raw_tokens:
+        if not raw_tok or draw.textlength(raw_tok, font=font) <= max_width:
+            tokens.append(raw_tok)
+            continue
+        piece = ""
+        for ch in raw_tok:
+            cand = piece + ch
+            if piece and draw.textlength(cand, font=font) > max_width:
+                tokens.append(piece)
+                piece = ch
+            else:
+                piece = cand
+        if piece:
+            tokens.append(piece)
     for token in tokens:
         trial = f"{current} {token}".strip()
         width = draw.textlength(trial, font=font)
@@ -597,12 +665,11 @@ def render_demo_video(
     probe_report: Mapping[str, Any],
     duration_seconds: int = DEFAULT_DEMO_DURATION_SECONDS,
     fps: int = DEFAULT_DEMO_FPS,
-    allow_short_for_tests: bool = False,
     secret_env_names: Sequence[str] | None = None,
     extra_secrets: Sequence[str] | None = None,
 ) -> DemoRenderResult:
     """Render a captioned 1920x1080 H.264 MP4 walkthrough from AuditRunBundle & ProbeSuiteReport."""
-    if not allow_short_for_tests and not (60 <= int(duration_seconds) <= 300):
+    if not (60 <= int(duration_seconds) <= 300):
         raise ValueError(
             f"Demo video duration_seconds must be between 60 and 300 seconds; got {duration_seconds}."
         )

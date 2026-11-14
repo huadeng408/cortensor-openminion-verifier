@@ -32,33 +32,34 @@ Given a prediction-market / oracle **`ClaimDossier`**, the application coordinat
 1. **`agent_runtime_isolation`**: Isolated `home_root` / `data_root` SQLite DBs + scrubbed secret-free `agents.json`.
 2. **`structured_pydantic_output`**: Strict `BaseModel` validation + `AgentOutputValidationError` negative contract.
 3. **`tool_and_forced_tools`**: Custom `@tool` dispatch + deterministic `forced_tools=(...)` execution.
-4. **`policy_confirmation_gate`**: `@tool(dangerous=True, min_scope="WRITE_SAFE")` gated via `approval_callback` (`allow` & `deny`).
+4. **`policy_confirmation_gate`**: `@tool(dangerous=True, min_scope="WRITE_SAFE")` gated via `approval_callback` (`allow` & `deny`) plus fail-closed `approval_callback=None` pause (`thread_id`) and `allow_once` resume.
 5. **`session_continuity`**: Multi-turn `thread_id` continuity within `session_id` + zero cross-session leakage.
 6. **`memory_bundle_portability`**: `export_bundle` -> `save_bundle` -> `load_bundle` -> `import_bundle` roundtrip.
 7. **`subagent_delegation`**: Isolated `SubagentRunContext` delegation without closing parent runtime.
 8. **`agent_handoff`**: Coordinator-to-specialist peer transfer via `Handoff` (`transfer_to_specialist` / `transfer_to_publisher`).
 9. **`submit_turn_streaming_telemetry`**: Real `APIRuntime.submit_turn()` streaming `TurnChunk` collection + `TurnResponse.stats` vs `TurnTelemetry`.
-10. **`error_and_timeout_contracts`**: `http_connection_reuse_enabled=False` Windows policy, HTTP 500 `ProviderError` retry behavior, and `TurnTimeoutError`.
+10. **`error_and_timeout_contracts`**: `http_connection_reuse_enabled=False` Windows policy, HTTP 500 `ProviderError` retry behavior, `TurnTimeoutError`, and `AnthropicProvider` (`/anthropic/v1/messages`) / `CortensorProvider` (`/cortensor/api/v2/completions`) / `OpenAIProvider.stream()` SSE usage wire contracts.
 
 See full live matrix in [`docs/BUILDING_BLOCKS_TESTED.md`](BUILDING_BLOCKS_TESTED.md).
 
-### Key Empirical DX Findings (`9` Findings from Live `openminion==0.1.21` Calibration)
+### Key Empirical DX Findings (`10` Findings from Live `openminion==0.1.21` Calibration)
 
-Full technical breakdown with source references and workarounds is documented in [`docs/WHAT_WE_LEARNED.md`](WHAT_WE_LEARNED.md):
+Full technical breakdown with source references and per-probe telemetry is documented in [`docs/WHAT_WE_LEARNED.md`](WHAT_WE_LEARNED.md):
 
-1. **Out-of-Band Classifier Turns**: `FreshnessContract` / `FinalizationStatus` / `ClosureJudgment` (`tool_choice="submit_output"`) require preserving `action_summary` / `closure_action_summary`.
-2. **Explicit `thread_id` Requirement**: `Agent.run(session_id=...)` allocates a fresh thread unless `thread_id=turn1.thread_id` is also forwarded.
-3. **Provider Protocol Split**: `AnthropicProvider` (`/messages` + `x-api-key`) vs `OpenAIProvider` & `CortensorProvider` (`/chat/completions` or `/api/v2/completions` + Bearer auth).
-4. **Sync/Awaitable `approval_callback` vs `submit_turn` Streams**: `submit_turn()` uses `approval_transport="turn_stream"` and `handle.resolve_approval(...)`.
-5. **Windows Worktree Isolation & Socket Reuse Policy**: Explicit `home_root`/`data_root` + `http_connection_reuse_enabled=False` prevents SQLite collisions and stale keep-alive errors.
-6. **Retry Multiplication & `TurnTelemetry` Mismatch**: `LLMCTLBridgeProvider` retries (`max_retries=2`) multiply with `BrainRunner`'s outer retry loop (`provider_retry_max_attempts=2` -> 6 attempts on HTTP 500); `TurnTelemetry` reads `metadata.get("usage_prompt_tokens")` (`0`) whereas `TurnResponse.stats` reports actual usage (`11,841` input / `430` output in probe #9).
-7. **90s Turn-Timeout Default & `Handoff` Forwarding Gap**: `Agent.run()` defaults `timeout_seconds` to `90.0s`, and `build_delegate_tool()` (`openminion/api/handoff.py:169`) calls `handoff.target.run(message)` without forwarding `timeout_seconds` or `approval_callback`, requiring target-runtime `PolicyGrantInput` and prompt efficiency under 90s; additionally, live coordinators paraphrase peer responses rather than echoing raw markers verbatim.
-8. **Structured Output Envelope Collision**: `runtime.run_turn()` prepends `f"{agent_id}: "` and `BrainRunner`'s `respond(answer, freshness)` wrapper can collide with `_extract_json_object()` unless strict RFC-8259 raw JSON constraints are reiterated at the end of the prompt.
-9. **Shared Session / Parallel Tool-Call `task_update` Collision**: `resolve_entry_task_update()` raises `ValueError` when sequential `subagent()` calls share a raw `session_id` or batch parallel tool calls; per-pass isolated runtime `session_id`s + explicit `MemoryBundle` citation handoff eliminate the crash.
+1. **Worktree-Isolated Containment**: Explicit `home_root` / `data_root` isolates `agents.json` and SQLite/Alembic DBs per worktree without touching developer global configuration.
+2. **Internal Classifiers & Output Coercion**: `FreshnessContract` / `FinalizationStatus` / `ClosureJudgment` (`tool_choice="submit_output"`) require preserving `action_summary` / `closure_action_summary`, and `Agent._coerce_output()` relies on `_extract_json_object()` due to the `f"{agent_id}: "` reply prefix.
+3. **Read-Only Tool Binding & Forced Dispatch**: `@tool(min_scope="READ_ONLY")` combined with `tool_choice="forced"` executes deterministically without workspace writes.
+4. **Sync `approval_callback` vs Fail-Closed Pause/Resume**: `@tool(dangerous=True, min_scope="WRITE_SAFE")` honors boolean `approval_callback` (`allow` / `deny`) and pauses fail-closed on `approval_callback=None` (`pending_confirmation_command_id` + `thread_id`) until `Agent.run("allow_once", session_id=..., thread_id=...)`.
+5. **Explicit `thread_id` Requirement**: `Agent.run(session_id=...)` allocates a fresh thread unless `thread_id` is forwarded alongside `session_id`.
+6. **Cross-Runtime `MemoryBundle` Portability**: `export_session_memory()` and `import_session_memory()` roundtrip portable bundles across separate `APIRuntime` SQLite stores.
+7. **Isolated Subagent Passes & 90s Timeout Forwarding**: Per-pass isolated subagent sessions prevent `resolve_entry_task_update()` `Missing/Duplicate task_update` crashes (`openminion/modules/brain/loop/context/task_context.py:153-191`), while explicit `timeout_seconds` prevents falling back to the `90.0s` default.
+8. **Peer `Handoff` Timeout/Approval Forwarding Gap**: `build_delegate_tool()` (`openminion/api/handoff.py:169`) calls `handoff.target.run(message)` without caller `timeout_seconds` or `approval_callback`, requiring target-runtime `PolicyGrantInput(max_uses=1)`; live coordinators also paraphrase specialist replies rather than echoing raw markers.
+9. **`submit_turn()` Telemetry vs `TurnResponse.stats`**: `APIRuntime.submit_turn()` emitted `12` `TurnChunk`s with `TurnTelemetry(duration_ms=6281, tokens_in=0, tokens_out=0)` whereas `TurnResponse.stats` recorded `input_tokens=11841`, `output_tokens=430` (`telemetry_metadata_mismatch=True`).
+10. **Provider Wire Protocols, Retry Multiplication & Connection Reuse Policy**: `AnthropicProvider` (`x-api-key` + `/messages`), `CortensorProvider` (`Bearer` + `/api/v2/completions`), and `OpenAIProvider.stream()` (`provider_identity={"service_vendor": "openai"}` SSE usage gating) were verified alongside `http_connection_reuse_enabled=False`, HTTP 500 `6`-attempt retry multiplication (`provider_retry_max_attempts=2` * transport retries), and `TurnTimeoutError`.
 
 ### Calibration Telemetry Summary (`[Live LLM Calibrated]`)
 
-- **10/10 Building-Block Probes (`grok-4.7`)**: `10/10` `PASS` (`failed=0`), `604,418.99 ms` total latency (`https://<configured-openai-compatible-relay>/v1`).
+- **10/10 Building-Block Probes (`grok-4.7`)**: `10/10` `PASS` (`failed=0`), `611,888.99 ms` total latency (`https://<configured-openai-compatible-relay>/v1`).
 - **Dual-Pass Audit (`grok-4.6`, `delphi-btc-etf-2024`)**: Verdict `SUPPORTED`, `agreement_score=0.98`, `mean_confidence=0.94`, passes `corroborator (0.96)` & `skeptic (0.92)`, `3` read-only tool calls, `Handoff allow_once` `published=True`, `20` requests / `118,193` total tokens / `394,205 ms` recorded in [`fixtures/calibrated_sample_run.json`](../fixtures/calibrated_sample_run.json).
 
 ### Reproducibility & Demo Video

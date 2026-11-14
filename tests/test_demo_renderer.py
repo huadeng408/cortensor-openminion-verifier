@@ -176,16 +176,15 @@ def test_render_demo_video_outputs_1080p_mp4_with_scene_progression(tmp_path: Pa
         output_path=out_mp4,
         audit_bundle=sample["audit_bundle"],
         probe_report=sample["probe_report"],
-        duration_seconds=4,
-        fps=4,
-        allow_short_for_tests=True,
+        duration_seconds=60,
+        fps=1,
     )
 
     assert out_mp4.exists()
     assert out_mp4.stat().st_size > 10_000
     assert result.width == 1920
     assert result.height == 1080
-    assert result.duration_seconds == pytest.approx(4.0)
+    assert result.duration_seconds == pytest.approx(60.0)
     assert result.scene_count == 7
 
     reader = imageio.get_reader(out_mp4, format="ffmpeg")
@@ -194,7 +193,7 @@ def test_render_demo_video_outputs_1080p_mp4_with_scene_progression(tmp_path: Pa
     finally:
         reader.close()
 
-    assert len(frames) == 16
+    assert len(frames) == 60
     first = frames[0]
     last = frames[-1]
     assert first.shape == (1080, 1920, 3)
@@ -220,9 +219,8 @@ def test_render_demo_video_fails_closed_on_plaintext_secret(
             output_path=tmp_path / "blocked.mp4",
             audit_bundle=sample["audit_bundle"],
             probe_report=sample["probe_report"],
-            duration_seconds=4,
-            fps=4,
-            allow_short_for_tests=True,
+            duration_seconds=60,
+            fps=1,
             secret_env_names=["OPENAI_API_KEY"],
         )
 
@@ -243,10 +241,9 @@ def test_cli_render_demo_works_across_external_cwd(
             "-o",
             str(out_mp4),
             "--duration-seconds",
-            "4",
+            "60",
             "--fps",
-            "4",
-            "--allow-short-test",
+            "1",
         ]
     )
 

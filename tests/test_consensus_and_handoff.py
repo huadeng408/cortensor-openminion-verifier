@@ -848,3 +848,165 @@ def test_cli_multi_pass_memory_bundle_and_pause_resume(
     assert resumed_bundle.publication.published is True
     assert resumed_bundle.publication.publication_status == "published"
     assert len(pub_log.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_thread_id_resume_fails_closed_when_mode_omitted_and_rejects_unknown_thread(
+    tmp_path: Path,
+    loopback_server: LoopbackLLMServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "stub-key")
+    dossier = _btc_dossier()
+    pub_log = tmp_path / "fail_closed_resume.jsonl"
+
+    _enqueue_dual_pass_agreement(loopback_server)
+    loopback_server.enqueue(
+        tool_calls_step(
+            {
+                "id": "call_fc_pause",
+                "name": "transfer_to_publisher",
+                "arguments": {"message": "Publish delphi-btc-etf-2024"},
+            }
+        )
+    )
+
+    with _make_auditor(tmp_path, loopback_server) as auditor:
+        paused = auditor.audit_claim(
+            dossier,
+            session_id="sess-fc",
+            publish=True,
+            approval_mode="pause",
+            publication_log_path=pub_log,
+        )
+        assert paused.publication is not None and paused.publication.thread_id
+        assert paused.publication.publication_status == "paused"
+
+        # Passing approval_mode=None & no approval_callback MUST stay paused (fail-closed)
+        still_paused = auditor.audit_claim(
+            dossier,
+            session_id="sess-fc",
+            thread_id=paused.publication.thread_id,
+            publish=True,
+            approval_mode=None,
+            publication_log_path=pub_log,
+        )
+        assert still_paused.publication is not None
+        assert still_paused.publication.published is False
+        assert still_paused.publication.publication_status == "paused"
+        assert not pub_log.exists()
+
+        # Unknown thread_id MUST raise ValueError instead of silently continuing
+        with pytest.raises(ValueError, match="Unknown|thread_id"):
+            auditor.audit_claim(
+                dossier,
+                session_id="sess-fc",
+                thread_id="missing-thread-id-999",
+                publish=True,
+                approval_mode="allow_once",
+                publication_log_path=pub_log,
+            )
+
+        # Passing explicit approval_callback with approval_mode=None resumes allow_once
+        loopback_server.enqueue(
+            tool_calls_step(
+                {
+                    "id": "call_fc_pub",
+                    "name": "publish_consensus_verdict",
+                    "arguments": {
+                        "claim_id": dossier.claim_id,
+                        "final_verdict": "SUPPORTED",
+                        "agreement_score": paused.consensus.agreement_score,
+                        "mean_confidence": paused.consensus.mean_confidence,
+                        "requires_human_review": False,
+                        "session_id": "sess-fc",
+                        "summary": "Resumed via callback.",
+                    },
+                }
+            )
+        )
+        loopback_server.enqueue(
+            text_step('Done.\n<finalization_status>{"status": "final_answer"}</finalization_status>')
+        )
+        resumed = auditor.audit_claim(
+            dossier,
+            session_id="sess-fc",
+            thread_id=paused.publication.thread_id,
+            publish=True,
+            approval_mode=None,
+            approval_callback=lambda _t, _a, _id: True,
+            publication_log_path=pub_log,
+        )
+        assert resumed.publication is not None
+        assert resumed.publication.published is True
+        assert len(pub_log.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_cortensor_router_publisher_preserves_provider_and_avoids_double_nested_state_root(
+    tmp_path: Path,
+    loopback_server: LoopbackLLMServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORTENSOR_API_KEY", "cort-stub-key")
+    monkeypatch.chdir(tmp_path)
+    dossier = _btc_dossier()
+
+    _enqueue_dual_pass_agreement(loopback_server)
+    loopback_server.enqueue(
+        tool_calls_step(
+            {
+                "id": "call_cort_h",
+                "name": "transfer_to_publisher",
+                "arguments": {"message": "Publish via cortensor-router"},
+            }
+        )
+    )
+    loopback_server.enqueue(
+        tool_calls_step(
+            {
+                "id": "call_cort_p",
+                "name": "publish_consensus_verdict",
+                "arguments": {
+                    "claim_id": dossier.claim_id,
+                    "final_verdict": "SUPPORTED",
+                    "agreement_score": 0.96,
+                    "mean_confidence": 0.88,
+                    "requires_human_review": False,
+                    "session_id": "sess-cort-pub",
+                    "summary": "Cortensor preset publish.",
+                },
+            }
+        )
+    )
+    loopback_server.enqueue(
+        text_step('Published.\n<finalization_status>{"status": "final_answer"}</finalization_status>')
+    )
+    loopback_server.enqueue(
+        text_step('Coordinator done.\n<finalization_status>{"status": "final_answer"}</finalization_status>')
+    )
+
+    state_root = tmp_path / ".openminion-state"
+    with ConsensusAuditor(
+        preset="cortensor-router",
+        base_url=loopback_server.base_url,
+        model="stub-cortensor-model",
+        api_key_env="CORTENSOR_API_KEY",
+        home_root=tmp_path / "cort-home",
+        data_root=state_root,
+    ) as auditor:
+        bundle = auditor.audit_claim(
+            dossier,
+            session_id="sess-cort-pub",
+            publish=True,
+            approval_mode="allow_once",
+        )
+        pub_rt = auditor._ensure_publisher_runtime()
+        assert pub_rt.config.providers.cortensor.base_url.rstrip("/") == loopback_server.base_url.rstrip("/")
+        mem = auditor.export_session_memory("sess-cort-pub")
+        assert len(mem.metadata.get("pass_session_ids", [])) >= 2
+
+    assert bundle.publication is not None
+    assert bundle.publication.published is True
+    expected_log = state_root / "published_verdicts.jsonl"
+    nested_log = state_root / ".openminion-state" / "published_verdicts.jsonl"
+    assert expected_log.exists()
+    assert not nested_log.exists()

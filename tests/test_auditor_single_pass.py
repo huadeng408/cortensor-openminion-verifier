@@ -1,4 +1,4 @@
-"""Tests for read-only verifier tools and ConsensusAuditor.audit_single_pass seam."""
+"""Tests for read-only verifier tools and ConsensusAuditor.audit_claim(single_pass=True) seam."""
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ def test_audit_single_pass_roundtrips_read_only_tools_and_validates_output(
         data_root=tmp_path / "state",
         provider_retry_max_attempts=1,
     ) as auditor:
-        pass_result = auditor.audit_single_pass(dossier)
+        pass_result = auditor.audit_claim(dossier, single_pass=True).consensus.passes[0]
 
     assert isinstance(pass_result, VerifierPassResult)
     assert pass_result.verdict == "SUPPORTED"
@@ -224,7 +224,7 @@ def test_audit_single_pass_propagates_validation_error_on_malformed_output(
         provider_retry_max_attempts=1,
     ) as auditor:
         with pytest.raises(AgentOutputValidationError):
-            auditor.audit_single_pass(dossier)
+            auditor.audit_claim(dossier, single_pass=True)
 
 
 def test_audit_single_pass_propagates_provider_error_on_500_and_unreachable_port(
@@ -245,7 +245,7 @@ def test_audit_single_pass_propagates_provider_error_on_500_and_unreachable_port
         provider_retry_max_attempts=1,
     ) as auditor_500:
         with pytest.raises(ProviderError):
-            auditor_500.audit_single_pass(dossier)
+            auditor_500.audit_claim(dossier, single_pass=True)
 
     with ConsensusAuditor(
         preset="openai-compatible",
@@ -256,4 +256,4 @@ def test_audit_single_pass_propagates_provider_error_on_500_and_unreachable_port
         timeout_seconds=5,
     ) as auditor_down:
         with pytest.raises(ProviderError):
-            auditor_down.audit_single_pass(dossier)
+            auditor_down.audit_claim(dossier, single_pass=True)

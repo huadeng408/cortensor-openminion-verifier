@@ -26,6 +26,36 @@ from cortensor_verifier.runtime_factory import PROVIDER_PRESETS
 from cortensor_verifier.tools import load_claim_dossier, load_dossier_from_file
 
 
+def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
+    """Register shared runtime isolation and provider preset CLI flags."""
+    parser.add_argument(
+        "--preset",
+        choices=PROVIDER_PRESETS,
+        default="openai-compatible",
+        help="Provider runtime preset.",
+    )
+    parser.add_argument("--base-url", help="Override provider base URL.")
+    parser.add_argument("--model", help="Override model name.")
+    parser.add_argument(
+        "--api-key-env",
+        help="Environment variable name holding the provider API key.",
+    )
+    parser.add_argument(
+        "--home-root",
+        help="Isolated home directory for .openminion/agents.json.",
+    )
+    parser.add_argument(
+        "--data-root",
+        help="Isolated state root directory (.openminion-state).",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Maximum provider retry attempts per turn.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -51,40 +81,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixtures",
         help="Optional fixture catalog JSON path when using --claim-id.",
     )
-    audit_parser.add_argument(
-        "--preset",
-        choices=PROVIDER_PRESETS,
-        default="openai-compatible",
-        help="Provider runtime preset.",
-    )
-    audit_parser.add_argument("--base-url", help="Override provider base URL.")
-    audit_parser.add_argument("--model", help="Override model name.")
-    audit_parser.add_argument(
-        "--api-key-env",
-        help="Environment variable name holding the provider API key.",
-    )
-    audit_parser.add_argument(
-        "--home-root",
-        help="Isolated home directory for .openminion/agents.json.",
-    )
-    audit_parser.add_argument(
-        "--data-root",
-        help="Isolated state root directory (.openminion-state).",
-    )
+    _add_common_runtime_args(audit_parser)
     pass_mode = audit_parser.add_mutually_exclusive_group()
     pass_mode.add_argument(
         "--single-pass",
         dest="single_pass",
         action="store_true",
-        default=True,
-        help="Execute single-pass structured audit (default).",
+        help="Execute single-pass structured audit instead of dual-pass consensus.",
     )
     pass_mode.add_argument(
         "--multi-pass",
         dest="single_pass",
         action="store_false",
-        help="Execute dual-perspective corroborator/skeptic subagent consensus audit.",
+        help="Execute dual-perspective corroborator/skeptic subagent consensus audit (default).",
     )
+    audit_parser.set_defaults(single_pass=False)
     audit_parser.add_argument(
         "--session-id",
         default=None,
@@ -123,12 +134,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional file path to export the session MemoryBundle JSON.",
     )
     audit_parser.add_argument(
-        "--max-retries",
-        type=int,
-        default=2,
-        help="Maximum provider retry attempts per turn.",
-    )
-    audit_parser.add_argument(
         "--timeout-seconds",
         type=int,
         default=None,
@@ -144,32 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
         "probe",
         help="Run all 10 OpenMinion 0.1 building-block probes and optionally export docs.",
     )
-    probe_parser.add_argument(
-        "--preset",
-        choices=PROVIDER_PRESETS,
-        default="openai-compatible",
-        help="Provider runtime preset.",
-    )
-    probe_parser.add_argument("--base-url", help="Override provider base URL.")
-    probe_parser.add_argument("--model", help="Override model name.")
-    probe_parser.add_argument(
-        "--api-key-env",
-        help="Environment variable name holding the provider API key.",
-    )
-    probe_parser.add_argument(
-        "--home-root",
-        help="Isolated home directory for .openminion/agents.json.",
-    )
-    probe_parser.add_argument(
-        "--data-root",
-        help="Isolated state root directory (.openminion-state).",
-    )
-    probe_parser.add_argument(
-        "--max-retries",
-        type=int,
-        default=2,
-        help="Maximum provider retry attempts per turn.",
-    )
+    _add_common_runtime_args(probe_parser)
     probe_parser.add_argument(
         "--timeout-seconds",
         type=int,
@@ -231,12 +211,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_DEMO_FPS,
         help="Video frames per second.",
-    )
-    demo_parser.add_argument(
-        "--allow-short-test",
-        action="store_true",
-        default=False,
-        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -323,7 +297,6 @@ def _run_render_demo(args: argparse.Namespace) -> int:
         probe_report=probe_data,
         duration_seconds=args.duration_seconds,
         fps=args.fps,
-        allow_short_for_tests=bool(args.allow_short_test),
     )
     summary = {
         "output_path": str(result.output_path),

@@ -8,9 +8,9 @@
 - **Preset**: `openai-compatible`
 - **Model**: `grok-4.7`
 - **Endpoint Host**: `https://<configured-openai-compatible-relay>/v1`
-- **Generated At (UTC)**: `2026-11-14T16:01:03.834581+00:00`
+- **Generated At (UTC)**: `2026-11-14T17:06:50.166083+00:00`
 - **Result**: `10/10` probes passed (`failed=0`)
-- **Total Suite Latency**: `604418.99 ms`
+- **Total Suite Latency**: `611888.99 ms`
 
 ## Probe Matrix (10 Core OpenMinion Building Blocks)
 
@@ -19,13 +19,13 @@
 | 1 | `agent_runtime_isolation` | Agent & APIRuntime Isolation | **PASS** | 6576.08 | Isolated agents.json verified secret-free; SQLite DB isolated under data_root (14 db file(s)); run_id=2d700e1618cd402c803fd8c2f68ddb2d. |
 | 2 | `structured_pydantic_output` | Structured Pydantic Output & Validation Error | **PASS** | 207213.19 | Validated _ProbeStructuredOutput (status=OK, score=0.99) and verified AgentOutputValidationError negative contract. |
 | 3 | `tool_and_forced_tools` | @tool Registration & forced_tools Execution | **PASS** | 77598.94 | Executed auto tool (probe_lookup_fact) and forced_tools=(probe_echo_tag) cleanly. |
-| 4 | `policy_confirmation_gate` | Policy Gate (@tool dangerous=True Allow & Deny) | **PASS** | 68637.14 | Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') triggered approval_callback: allow executed att-allow; deny blocked att-deny. |
+| 4 | `policy_confirmation_gate` | Policy Gate (@tool dangerous=True Allow & Deny) | **PASS** | 76300.74 | Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') verified allow, deny, and fail-closed approval_callback=None pause/thread_id allow_once resume. |
 | 5 | `session_continuity` | Session Continuity & Cross-Session Isolation | **PASS** | 92405.48 | Session probe-sess-a-5b958e6d (thread probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8) recalled marker across turns; isolated session probe-sess-b-c3d87288 had zero leakage. |
 | 6 | `memory_bundle_portability` | MemoryBundle Export, Save, Load & Import | **PASS** | 1.99 | Roundtripped MemoryBundle vmemory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate). |
 | 7 | `subagent_delegation` | subagent() & SubagentRunContext Delegation | **PASS** | 30651.67 | Child subagent (probe-corroborator) ran with isolated SubagentRunContext (context_id=subagent-bf6c16b7d24d) without closing parent runtime. |
 | 8 | `agent_handoff` | Handoff Peer Agent Transfer Tool | **PASS** | 110097.21 | Handoff registered 'transfer_to_specialist' and executed peer specialist turn cleanly (invocations=1, verbatim_ack=False). |
 | 9 | `submit_turn_streaming_telemetry` | submit_turn() Streaming TurnChunk & TurnTelemetry | **PASS** | 6278.02 | Collected 12 TurnChunk(s) (status, final_text); TurnTelemetry(duration_ms=6281, tokens_in=0, tokens_out=0, retries=0, queue_wait_ms=0); stats(input_tokens=11841, output_tokens=430). |
-| 10 | `error_and_timeout_contracts` | ProviderError Retries, Timeout & Connection Reuse Policy | **PASS** | 4595.94 | Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after 6 attempt(s); slow stub (1.5s vs 1.0s timeout) raised TurnTimeoutError. |
+| 10 | `error_and_timeout_contracts` | ProviderError Retries, Timeout & Connection Reuse Policy | **PASS** | 4765.67 | Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after 6 attempt(s); slow stub (1.5s vs 1.0s timeout) raised TurnTimeoutError; verified Anthropic (/v1/messages), Cortensor (/api/v2/completions), and OpenAI SSE usage gating. |
 
 ## Per-Probe Telemetry & Metadata
 
@@ -45,9 +45,9 @@
 - **Metadata**: `{"forced_tool": "probe_echo_tag", "invocations": ["probe_lookup_fact:cortensor-poi", "probe_echo_tag:forced-c3"]}`
 
 ### `policy_confirmation_gate` — Policy Gate (@tool dangerous=True Allow & Deny)
-- **Passed**: `True` (`68637.14 ms`)
-- **Detail**: Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') triggered approval_callback: allow executed att-allow; deny blocked att-deny.
-- **Metadata**: `{"allow_executed": true, "callback_count": 2, "deny_blocked": true, "executed_ids": ["att-allow"]}`
+- **Passed**: `True` (`76300.74 ms`)
+- **Detail**: Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') verified allow, deny, and fail-closed approval_callback=None pause/thread_id allow_once resume.
+- **Metadata**: `{"allow_executed": true, "callback_count": 2, "deny_blocked": true, "executed_ids": ["att-allow", "att-pause-resume"], "pause_blocked": true, "paused_thread_id": "probe-policy-pause-18d3a53ede0:0274e1c9510a48b9b8727e9cfec5f271", "pending_confirmation_id": "call-5a36ca6b-fe80-4d14-8500-59e5a01ea5ef-0", "resume_executed": true}`
 
 ### `session_continuity` — Session Continuity & Cross-Session Isolation
 - **Passed**: `True` (`92405.48 ms`)
@@ -75,6 +75,6 @@
 - **Metadata**: `{"chunk_count": 12, "chunk_kinds": ["status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "final_text", "status"], "duration_ms": 6281, "queue_wait_ms": 0, "retries": 0, "stats": {"cache_read_tokens": 1152, "duration_ms": 6149, "input_tokens": 11841, "llm_calls": 1, "output_tokens": 430, "tool_calls": 0, "tool_errors": 0}, "stats_input_tokens": 11841, "stats_output_tokens": 430, "telemetry_metadata_mismatch": true, "tokens_in": 0, "tokens_out": 0}`
 
 ### `error_and_timeout_contracts` — ProviderError Retries, Timeout & Connection Reuse Policy
-- **Passed**: `True` (`4595.94 ms`)
-- **Detail**: Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after 6 attempt(s); slow stub (1.5s vs 1.0s timeout) raised TurnTimeoutError.
-- **Metadata**: `{"http_500_attempts": 6, "http_connection_reuse_enabled": false, "provider_error_raised": true, "timeout_exception": "TurnTimeoutError", "timeout_raised": true}`
+- **Passed**: `True` (`4765.67 ms`)
+- **Detail**: Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after 6 attempt(s); slow stub (1.5s vs 1.0s timeout) raised TurnTimeoutError; verified Anthropic (/v1/messages), Cortensor (/api/v2/completions), and OpenAI SSE usage gating.
+- **Metadata**: `{"http_500_attempts": 6, "http_connection_reuse_enabled": false, "provider_error_raised": true, "provider_wire_formats": {"anthropic_path": "/anthropic/v1/messages", "anthropic_version_header": true, "anthropic_x_api_key": true, "cortensor_bearer_auth": true, "cortensor_path": "/cortensor/api/v2/completions", "openai_sse_usage_with_vendor": true, "openai_sse_usage_without_vendor": false}, "timeout_exception": "TurnTimeoutError", "timeout_raised": true}`

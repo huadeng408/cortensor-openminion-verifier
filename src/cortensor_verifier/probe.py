@@ -236,6 +236,11 @@ class _FaultInjectionServer:
         return int(self._server.server_address[1])
 
     @property
+    def wire_captures(self) -> list[tuple[str, dict[str, str]]]:
+        with self._lock:
+            return list(getattr(self, "_wire_captures", []))
+
+    @property
     def url_500(self) -> str:
         return f"http://127.0.0.1:{self.port}/fault500/v1"
 
@@ -246,6 +251,18 @@ class _FaultInjectionServer:
     @property
     def url_malformed(self) -> str:
         return f"http://127.0.0.1:{self.port}/malformed/v1"
+
+    @property
+    def url_anthropic(self) -> str:
+        return f"http://127.0.0.1:{self.port}/anthropic/v1"
+
+    @property
+    def url_cortensor(self) -> str:
+        return f"http://127.0.0.1:{self.port}/cortensor/api/v2/completions"
+
+    @property
+    def url_openai_sse(self) -> str:
+        return f"http://127.0.0.1:{self.port}/openai_sse/v1"
 
     def close(self) -> None:
         self._stop_event.set()
@@ -328,12 +345,81 @@ class _FaultInjectionServer:
                     self._send(200, body)
                     return
 
+                if self.path == "/anthropic/v1/messages":
+                    with parent._lock:
+                        captures = getattr(parent, "_wire_captures", None)
+                        if captures is None:
+                            captures = []
+                            parent._wire_captures = captures
+                        captures.append(("anthropic", {k.lower(): v for k, v in self.headers.items()}))
+                    body = json.dumps(
+                        {
+                            "id": "msg_probe_anthropic",
+                            "type": "message",
+                            "role": "assistant",
+                            "model": "stub-anthropic",
+                            "content": [{"type": "text", "text": "ANTHROPIC_OK"}],
+                            "stop_reason": "end_turn",
+                            "usage": {"input_tokens": 11, "output_tokens": 3},
+                        }
+                    ).encode("utf-8")
+                    self._send(200, body)
+                    return
+
+                if self.path == "/cortensor/api/v2/completions":
+                    with parent._lock:
+                        captures = getattr(parent, "_wire_captures", None)
+                        if captures is None:
+                            captures = []
+                            parent._wire_captures = captures
+                        captures.append(("cortensor", {k.lower(): v for k, v in self.headers.items()}))
+                    body = json.dumps(
+                        {
+                            "id": "cmpl_probe_cortensor",
+                            "model": "gpt-oss-20b",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "text": "CORTENSOR_OK",
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {
+                                "prompt_tokens": 9,
+                                "completion_tokens": 3,
+                                "total_tokens": 12,
+                            },
+                        }
+                    ).encode("utf-8")
+                    self._send(200, body)
+                    return
+
+                if self.path == "/openai_sse/v1/chat/completions":
+                    with parent._lock:
+                        captures = getattr(parent, "_wire_captures", None)
+                        if captures is None:
+                            captures = []
+                            parent._wire_captures = captures
+                        captures.append(("openai_sse", {k.lower(): v for k, v in self.headers.items()}))
+                    sse_body = (
+                        'data: {"id":"chatcmpl-sse","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"SSE_OK"},"finish_reason":null}]}\n\n'
+                        'data: {"id":"chatcmpl-sse","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n\n'
+                        "data: [DONE]\n\n"
+                    ).encode("utf-8")
+                    self._send(200, sse_body, content_type="text/event-stream; charset=utf-8")
+                    return
+
                 self._send(404, b'{"error": "not_found"}')
 
-            def _send(self, status: int, body: bytes) -> None:
+            def _send(
+                self,
+                status: int,
+                body: bytes,
+                content_type: str = "application/json",
+            ) -> None:
                 try:
                     self.send_response(status)
-                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Type", content_type)
                     self.send_header("Content-Length", str(len(body)))
                     self.send_header("Connection", "close")
                     self.end_headers()
@@ -811,14 +897,48 @@ class BuildingBlockProbeRunner:
         )
         assert "att-deny" not in executed_ids, "Denied dangerous tool executed despite False callback."
         assert len(callback_events) >= 2, "approval_callback was not invoked for both allow and deny."
-        assert allow_res.text.strip() and deny_res.text.strip()
+
+        pause_session_id = f"probe-policy-pause-{id(self):x}"
+        pause_res = gate_agent.run(
+            "PROBE_POLICY_PAUSE: Publish attestation_id='att-pause-resume' using probe_publish_attestation.",
+            session_id=pause_session_id,
+            approval_callback=None,
+            timeout_seconds=self._turn_timeout(),
+        )
+        assert "att-pause-resume" not in executed_ids, (
+            "Dangerous tool executed despite approval_callback=None pause."
+        )
+        paused_thread_id = getattr(pause_res, "thread_id", None) or pause_res.metadata.get("thread_id")
+        pending_confirmation_id = (
+            getattr(pause_res, "pending_confirmation_command_id", None)
+            or pause_res.metadata.get("pending_confirmation_command_id")
+        )
+        assert paused_thread_id, "approval_callback=None pause did not return a thread_id."
+        assert pending_confirmation_id, (
+            "approval_callback=None pause did not populate pending_confirmation_command_id."
+        )
+
+        resume_res = gate_agent.run(
+            "allow_once",
+            session_id=pause_session_id,
+            thread_id=paused_thread_id,
+            timeout_seconds=self._turn_timeout(),
+        )
+        assert "att-pause-resume" in executed_ids, (
+            "Resumed allow_once turn did not execute pending dangerous tool."
+        )
+        assert allow_res.text.strip() and deny_res.text.strip() and resume_res.text.strip()
 
         return (
-            "Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') triggered approval_callback: "
-            "allow executed att-allow; deny blocked att-deny.",
+            "Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') verified allow, deny, and "
+            "fail-closed approval_callback=None pause/thread_id allow_once resume.",
             {
                 "allow_executed": True,
                 "deny_blocked": True,
+                "pause_blocked": True,
+                "resume_executed": True,
+                "paused_thread_id": paused_thread_id,
+                "pending_confirmation_id": pending_confirmation_id,
                 "callback_count": len(callback_events),
                 "executed_ids": list(executed_ids),
             },
@@ -1170,15 +1290,117 @@ class BuildingBlockProbeRunner:
                 rt_slow.close()
             assert timeout_raised, "Slow handler did not trigger TurnTimeoutError or ProviderError."
 
+            from openminion.modules.llm.providers.anthropic.adapter import AnthropicProvider
+            from openminion.modules.llm.providers.cortensor.adapter import CortensorProvider
+            from openminion.modules.llm.providers.openai.adapter import OpenAIProvider
+            from openminion.modules.llm.schemas import LLMRequest, Message
+
+            wire_req = LLMRequest(messages=[Message(role="user", content="WIRE_PROBE")])
+            anthropic_provider = AnthropicProvider()
+            try:
+                anth_res = anthropic_provider.complete(
+                    wire_req,
+                    {
+                        "base_url": fault.url_anthropic,
+                        "api_key": "probe-anthropic-key",
+                        "model": "stub-anthropic",
+                        "timeout_seconds": 3,
+                        "http_connection_reuse_enabled": False,
+                    },
+                )
+            finally:
+                anthropic_provider.close()
+            assert anth_res.ok and anth_res.output_text == "ANTHROPIC_OK", (
+                f"Unexpected AnthropicProvider wire output: {anth_res.output_text!r}"
+            )
+
+            cortensor_provider = CortensorProvider()
+            try:
+                cort_res = cortensor_provider.complete(
+                    wire_req,
+                    {
+                        "base_url": fault.url_cortensor,
+                        "api_key": "probe-cortensor-key",
+                        "model": "gpt-oss-20b",
+                        "session_id": 1,
+                        "timeout_seconds": 3,
+                        "http_connection_reuse_enabled": False,
+                    },
+                )
+            finally:
+                cortensor_provider.close()
+            assert cort_res.ok and cort_res.output_text == "CORTENSOR_OK", (
+                f"Unexpected CortensorProvider wire output: {cort_res.output_text!r}"
+            )
+
+            openai_provider = OpenAIProvider()
+            try:
+                events_default = list(
+                    openai_provider.stream(
+                        wire_req,
+                        {
+                            "base_url": fault.url_openai_sse,
+                            "api_key": "probe-openai-sse-key",
+                            "model": "stub-model",
+                            "timeout_seconds": 3,
+                            "http_connection_reuse_enabled": False,
+                        },
+                    )
+                )
+                events_vendor = list(
+                    openai_provider.stream(
+                        wire_req,
+                        {
+                            "base_url": fault.url_openai_sse,
+                            "api_key": "probe-openai-sse-key",
+                            "model": "stub-model",
+                            "provider_identity": {"service_vendor": "openai"},
+                            "timeout_seconds": 3,
+                            "http_connection_reuse_enabled": False,
+                        },
+                    )
+                )
+            finally:
+                openai_provider.close()
+
+            done_default = [ev for ev in events_default if ev.type == "done"][-1]
+            done_vendor = [ev for ev in events_vendor if ev.type == "done"][-1]
+            assert done_default.usage is None, (
+                "Expected default OpenAIProvider.stream() to skip final SSE usage chunk."
+            )
+            assert done_vendor.usage is not None and done_vendor.usage.total_tokens == 12, (
+                "Expected service_vendor='openai' to preserve final SSE usage chunk."
+            )
+
+            captured_by_route = dict(fault.wire_captures)
+            anth_headers = captured_by_route.get("anthropic", {})
+            cort_headers = captured_by_route.get("cortensor", {})
+            assert anth_headers.get("x-api-key") == "probe-anthropic-key"
+            assert "anthropic-version" in anth_headers
+            assert cort_headers.get("authorization") == "Bearer probe-cortensor-key"
+            provider_wire_formats = {
+                "anthropic_path": "/anthropic/v1/messages",
+                "anthropic_x_api_key": bool(anth_headers.get("x-api-key")),
+                "anthropic_version_header": bool(anth_headers.get("anthropic-version")),
+                "cortensor_path": "/cortensor/api/v2/completions",
+                "cortensor_bearer_auth": str(cort_headers.get("authorization", "")).startswith("Bearer "),
+                "openai_sse_usage_without_vendor": done_default.usage is not None,
+                "openai_sse_usage_with_vendor": bool(
+                    done_vendor.usage is not None and done_vendor.usage.total_tokens == 12
+                ),
+            }
+
             return (
                 f"Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after "
-                f"{fault.attempts_500} attempt(s); slow stub (1.5s vs 1.0s timeout) raised {timeout_exc_name}.",
+                f"{fault.attempts_500} attempt(s); slow stub (1.5s vs 1.0s timeout) raised {timeout_exc_name}; "
+                "verified Anthropic (/v1/messages), Cortensor (/api/v2/completions), and OpenAI SSE usage gating.",
                 {
                     "http_500_attempts": fault.attempts_500,
                     "provider_error_raised": provider_error_raised,
                     "timeout_raised": timeout_raised,
                     "timeout_exception": timeout_exc_name,
                     "http_connection_reuse_enabled": False,
+                    "provider_wire_formats": provider_wire_formats,
                 },
             )
         finally:
@@ -1190,112 +1412,155 @@ class BuildingBlockProbeRunner:
 
 
 def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict[str, str]]:
-    """Build factual DX findings anchored in observed openminion==0.1.21 behavior."""
-    by_id = {item.probe_id: item for item in probes}
-    err_meta = by_id.get("error_and_timeout_contracts", ProbeCheckResult(probe_id="x", name="x", passed=False)).metadata
-    stream_meta = by_id.get("submit_turn_streaming_telemetry", ProbeCheckResult(probe_id="x", name="x", passed=False)).metadata
-    policy_meta = by_id.get("policy_confirmation_gate", ProbeCheckResult(probe_id="x", name="x", passed=False)).metadata
+    """Build factual DX findings exclusively from probes that actually ran and passed."""
+    passed = {item.probe_id: item for item in probes if item.passed}
+    findings: list[dict[str, str]] = []
 
-    return [
-        {
-            "title": "Internal Structured Classifier Turns (FreshnessContract / FinalizationStatus / ClosureJudgment)",
-            "observation": (
-                "openminion==0.1.21 emits out-of-band tool_choice='submit_output' requests with JSON schema titles "
-                "`FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment`. In closure evaluation, "
-                "`[JUDGE CONTEXT]` supplies `action_summary:` while `final_close_message()` prefers "
-                "`ClosureJudgment.final_answer` over `action_result.summary`, so gateways/stubs handling "
-                "`ClosureJudgment` must preserve `action_summary` / `closure_action_summary` or risk overwriting structured JSON answers."
-            ),
-        },
-        {
-            "title": "Explicit thread_id Required for Multi-Turn Agent.run(session_id=...) Continuity",
-            "observation": (
-                "Calling `Agent.run(..., session_id=session_a)` returns an allocated `thread_id` (`metadata['thread_id']`); "
-                "without passing `thread_id=turn1.thread_id` on subsequent calls, `openminion==0.1.21` starts a fresh "
-                "conversation thread even with matching `session_id`. Forwarding both `session_id` and `thread_id` retains "
-                "transcript history while separate `session_id` values remain isolated."
-            ),
-        },
-        {
-            "title": "AnthropicProvider (/v1/messages + x-api-key) vs OpenAI-Compatible & Cortensor Adapters",
-            "observation": (
-                "`AnthropicProvider` sends POST `{base_url}/messages` with `x-api-key` and `anthropic-version` headers "
-                "(`accept: text/event-stream` for streaming), whereas `OpenAIProvider` and `CortensorProvider` use "
-                "Bearer auth (`Authorization: Bearer ...`) against `/chat/completions` or `/api/v2/completions`."
-            ),
-        },
-        {
-            "title": "Inline Boolean approval_callback vs Async RuntimeTurnHandle.resolve_approval()",
-            "observation": (
-                f"`Agent.run(..., approval_callback=...)` bridges a synchronous/awaitable boolean guard onto the brain "
-                f"worker thread (observed {policy_meta.get('callback_count', 0)} callback invocations across allow & deny "
-                "gates on `@tool(dangerous=True, min_scope='WRITE_SAFE')`). In contrast, `APIRuntime.submit_turn()` sets "
-                "`approval_transport='turn_stream'` and requires stream consumers to resolve `approval` chunks via "
-                "`handle.resolve_approval(approval_id=..., decision='allow_once'|'deny')` with bounded wait timeouts."
-            ),
-        },
-        {
-            "title": "Windows SQLite Worktree Isolation & http_connection_reuse_enabled=False",
-            "observation": (
-                "Passing explicit `home_root` and `data_root` isolates `.openminion/agents.json` and SQLite/Alembic "
-                "state per worktree on Windows. Disabling `http_connection_reuse_enabled=False` avoids persistent `httpx.Client` "
-                "socket reuse (`http_client_for_config()` returns `None` and falls back to `urllib.request.urlopen`), "
-                "preventing stale keep-alive errors across ephemeral or loopback endpoints."
-            ),
-        },
-        {
-            "title": "Layered Retry Multiplication, SSE Usage Gating & TurnTelemetry vs stats",
-            "observation": (
-                f"On HTTP 500 with `provider_retry_max_attempts=2`, observed {err_meta.get('http_500_attempts', 'N/A')} "
-                "HTTP attempts because `LLMCTLBridgeProvider` adds inner transport retries (`max_retries=2`) inside "
-                f"`BrainRunner`'s outer retry loop. `submit_turn()` captured {stream_meta.get('chunk_count', 0)} TurnChunk(s) "
-                f"with `TurnTelemetry(duration_ms={stream_meta.get('duration_ms', 0)}, "
-                f"tokens_in={stream_meta.get('tokens_in', 0)}, tokens_out={stream_meta.get('tokens_out', 0)})` vs "
-                f"`TurnResponse.stats(input_tokens={stream_meta.get('stats_input_tokens', 0)}, "
-                f"output_tokens={stream_meta.get('stats_output_tokens', 0)})`: `daemon.py` reads "
-                "`metadata.get('usage_prompt_tokens')`, whereas the runtime populates `total_input_tokens_used` and `stats`. "
-                "Additionally, `OpenAIProvider.stream()` skips SSE `usage` chunks unless `provider_identity={'service_vendor': 'openai'}` "
-                "enables `preserve_response_facts`."
-            ),
-        },
-        {
-            "title": "90s Turn-Timeout Default, Handoff Forwarding Gap & Live Paraphrasing",
-            "observation": (
-                "`Agent.run(..., timeout_seconds=None)` defaults internal turn timeout to `90.0s` regardless of "
-                "`OpenMinionConfig` provider HTTP timeouts unless `timeout_seconds` is explicitly forwarded to BOTH "
-                "`Agent.run(timeout_seconds=...)` and `subagent(timeout_seconds=...)`. Multi-tool reasoning turns routinely "
-                "span multiple round-trips (`classifier + tool + finalization`). Furthermore, in "
-                "`openminion/api/handoff.py:169`, `build_delegate_tool()` calls `handoff.target.run(message)` without "
-                "forwarding caller `timeout_seconds` or `approval_callback`, leaving peer handoff targets on the `90.0s` "
-                "default turn timeout and requiring `PolicyGrantInput` on the target runtime for `allow_once` gating. "
-                "Additionally, live LLMs execute `Handoff` (`transfer_to_specialist`) cleanly and paraphrase the specialist "
-                "confirmation in coordinator prose rather than echoing synthetic marker tokens verbatim."
-            ),
-        },
-        {
-            "title": "Structured Output Envelope Collision (`respond(answer, freshness)` + `agent_id:` Prefix)",
-            "observation": (
-                "In `openminion==0.1.21`, `runtime.run_turn()` formats `body` with an `f'{agent_id}: '` prefix, causing "
-                "`Agent._coerce_output()`'s initial `output_type.model_validate_json(text)` to fail and rely on "
-                "`_extract_json_object(text)`. Meanwhile, `BrainRunner`'s entry prompt instructs direct replies using "
-                "`respond(answer=..., freshness=...)`; some live models occasionally emit that outer envelope as assistant "
-                "text (`agent: {\"answer\": \"{...}\", \"freshness\": {...}}`), causing `_extract_json_object()` to extract the "
-                "outer `freshness` wrapper instead of the inner JSON payload and raise `AgentOutputValidationError`. "
-                "Explicitly commanding single-line RFC-8259 double-quoted JSON and avoiding unquoted pseudo-schemas improves compliance."
-            ),
-        },
-        {
-            "title": "Shared Session & Parallel Tool-Call `task_update` Collision (`resolve_entry_task_update`)",
-            "observation": (
-                "In `openminion/modules/brain/loop/context/task_context.py:153-191`, `resolve_entry_task_update()` raises "
-                "`ValueError` (`'Missing task_update'` or `'Exactly one task_update is allowed per entry response'`), turning "
-                "the reply into the fallback clarification `'I could not safely update the task conditions...'` whenever an "
-                "active session receives sequential `subagent()` calls sharing the same raw `session_id` or when a model "
-                "batches multiple tool calls carrying duplicate `task_update` sidecars. Giving each subagent pass an isolated "
-                "runtime `session_id` while persisting cross-turn citations in explicit `MemoryBundle` state avoids the crash."
-            ),
-        },
-    ]
+    if "agent_runtime_isolation" in passed:
+        meta = passed["agent_runtime_isolation"].metadata
+        findings.append(
+            {
+                "title": "Worktree-Isolated home_root / data_root Containment",
+                "observation": (
+                    f"`create_isolated_runtime()` bound `agent_id={meta.get('agent_id', 'verifier')}` inside isolated "
+                    "`home_root` and `data_root` SQLite/agents.json directories (`reply_len="
+                    f"{meta.get('reply_len', 0)}`), preventing mutation of developer home state on Windows."
+                ),
+            }
+        )
+
+    if "structured_pydantic_output" in passed:
+        meta = passed["structured_pydantic_output"].metadata
+        findings.append(
+            {
+                "title": "Internal Classifiers (FreshnessContract / FinalizationStatus / ClosureJudgment) & Output Coercion",
+                "observation": (
+                    "openminion==0.1.21 issues `tool_choice='submit_output'` internal classifier turns (`FreshnessContract`, "
+                    "`FinalizationStatus`, and `ClosureJudgment` where stubs/gateways must preserve `action_summary`). "
+                    "`Agent._coerce_output()` also strips the `f'{agent_id}: '` reply prefix via `_extract_json_object()`, "
+                    f"producing typed schema output (`block={meta.get('block', 'n/a')}`, "
+                    f"`status={meta.get('status', 'n/a')}`, `score={meta.get('score', 'n/a')}`)."
+                ),
+            }
+        )
+
+    if "tool_and_forced_tools" in passed:
+        meta = passed["tool_and_forced_tools"].metadata
+        findings.append(
+            {
+                "title": "Read-Only @tool Binding & tool_choice='forced' Deterministic Dispatch",
+                "observation": (
+                    f"Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `{meta.get('tool_name', 'probe_digest')}` "
+                    f"(calls={meta.get('tool_call_count', 0)}, digest_seen={meta.get('digest_seen', False)}) without filesystem writes."
+                ),
+            }
+        )
+
+    if "policy_confirmation_gate" in passed:
+        meta = passed["policy_confirmation_gate"].metadata
+        findings.append(
+            {
+                "title": "approval_callback Boolean Gate & Fail-Closed approval_callback=None Pause/Resume",
+                "observation": (
+                    f"`@tool(dangerous=True, min_scope='WRITE_SAFE')` recorded `callback_count={meta.get('callback_count', 0)}`, "
+                    f"`allow_executed={meta.get('allow_executed', False)}`, and `deny_blocked={meta.get('deny_blocked', False)}`. "
+                    f"Passing `approval_callback=None` paused fail-closed (`pause_blocked={meta.get('pause_blocked', False)}`, "
+                    f"`pending_confirmation_id={meta.get('pending_confirmation_id', 'n/a')}`) and executed only after "
+                    f"`Agent.run('allow_once', session_id=..., thread_id=...)` (`resume_executed={meta.get('resume_executed', False)}`)."
+                ),
+            }
+        )
+
+    if "session_continuity" in passed:
+        meta = passed["session_continuity"].metadata
+        findings.append(
+            {
+                "title": "Explicit thread_id Required for Multi-Turn Agent.run(session_id=...) Continuity",
+                "observation": (
+                    f"Retaining context across turns on the same session required forwarding `thread_id="
+                    f"{meta.get('thread_id', 'n/a')}` alongside `session_id`; a distinct session preserved isolation "
+                    f"(`same_session_recalled={meta.get('same_session_recalled', False)}`, "
+                    f"`other_session_isolated={meta.get('other_session_isolated', False)}`)."
+                ),
+            }
+        )
+
+    if "memory_bundle_portability" in passed:
+        meta = passed["memory_bundle_portability"].metadata
+        findings.append(
+            {
+                "title": "Cross-Runtime MemoryBundle Export/Import Portability",
+                "observation": (
+                    f"`export_session_memory()` and `import_session_memory()` serialized and restored bundle "
+                    f"state (`bundle_id={meta.get('bundle_id', 'n/a')}`, `payload_keys={meta.get('payload_keys', [])}`) "
+                    "into a separate APIRuntime SQLite store."
+                ),
+            }
+        )
+
+    if "subagent_delegation" in passed:
+        meta = passed["subagent_delegation"].metadata
+        findings.append(
+            {
+                "title": "Isolated Subagent Passes, task_update Collisions & 90s Timeout Forwarding",
+                "observation": (
+                    "Separate subagent runtime sessions avoid `resolve_entry_task_update()` `Missing/Duplicate task_update` "
+                    "crashes (`openminion/modules/brain/loop/context/task_context.py:153-191`) when dispatching sequential "
+                    f"passes, while explicit `timeout_seconds` prevents falling back to the `90.0s` default (`reply_len="
+                    f"{meta.get('reply_len', 0)}`)."
+                ),
+            }
+        )
+
+    if "agent_handoff" in passed:
+        meta = passed["agent_handoff"].metadata
+        findings.append(
+            {
+                "title": "Peer Handoff Delegation & build_delegate_tool() Timeout/Approval Gap",
+                "observation": (
+                    "Peer handoff reached the specialist target (`handoff_tool_calls="
+                    f"{meta.get('handoff_tool_calls', 0)}`). Notably, `openminion/api/handoff.py:169` invokes "
+                    "`handoff.target.run(message)` without caller `timeout_seconds` or `approval_callback`, so target "
+                    "runtimes need explicit `PolicyGrantInput(max_uses=1)` for autonomous confirmation-gated publication."
+                ),
+            }
+        )
+
+    if "submit_turn_streaming_telemetry" in passed:
+        meta = passed["submit_turn_streaming_telemetry"].metadata
+        findings.append(
+            {
+                "title": "APIRuntime.submit_turn() TurnChunks & TurnTelemetry vs TurnResponse.stats",
+                "observation": (
+                    f"Collected {meta.get('chunk_count', 0)} TurnChunk(s) with `TurnTelemetry(duration_ms="
+                    f"{meta.get('duration_ms', 0)}, tokens_in={meta.get('tokens_in', 0)}, "
+                    f"tokens_out={meta.get('tokens_out', 0)}, retries={meta.get('retries', 0)}, "
+                    f"queue_wait_ms={meta.get('queue_wait_ms', 0)})` vs `TurnResponse.stats(input_tokens="
+                    f"{meta.get('stats_input_tokens', 0)}, output_tokens={meta.get('stats_output_tokens', 0)})`; "
+                    f"`telemetry_metadata_mismatch={meta.get('telemetry_metadata_mismatch', False)}`."
+                ),
+            }
+        )
+
+    if "error_and_timeout_contracts" in passed:
+        meta = passed["error_and_timeout_contracts"].metadata
+        wire = meta.get("provider_wire_formats") or {}
+        findings.append(
+            {
+                "title": "Provider Wire Formats, Layered HTTP 500 Retries & http_connection_reuse_enabled=False",
+                "observation": (
+                    f"With `http_connection_reuse_enabled={meta.get('http_connection_reuse_enabled', False)}`, HTTP 500 "
+                    f"produced {meta.get('http_500_attempts', 'N/A')} attempts (`provider_retry_max_attempts=2` * transport retries) "
+                    f"before raising `ProviderError`, and slow responses hit `{meta.get('timeout_exception', 'N/A')}`. "
+                    f"Wire checks verified `AnthropicProvider` (`x-api-key` + `anthropic-version` -> `{wire.get('anthropic_path', 'n/a')}`), "
+                    f"`CortensorProvider` (`Bearer` -> `{wire.get('cortensor_path', 'n/a')}`), and `OpenAIProvider.stream()` "
+                    f"SSE usage gating (`without_vendor={wire.get('openai_sse_usage_without_vendor', False)}`, "
+                    f"`with_service_vendor_openai={wire.get('openai_sse_usage_with_vendor', False)}`)."
+                ),
+            }
+        )
+
+    return findings
 
 
 def render_building_blocks_tested_md(report: ProbeSuiteReport) -> str:

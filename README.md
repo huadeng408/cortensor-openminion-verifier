@@ -108,8 +108,8 @@ All probe and audit figures below are captured directly in [`fixtures/calibrated
 
 - **Calibration Status**: `[Live LLM Calibrated]` (`openminion==0.1.21`, `preset=openai-compatible`, `model=grok-4.7`, `endpoint=https://<configured-openai-compatible-relay>/v1`)
 - **Pass Rate**: `10/10` probes passed (`failed=0`)
-- **Total Suite Latency**: `604,418.99 ms`
-- **Empirical DX Findings Captured**: `9` verified behaviors recorded in [`docs/WHAT_WE_LEARNED.md`](docs/WHAT_WE_LEARNED.md) and [`docs/BUILDING_BLOCKS_TESTED.md`](docs/BUILDING_BLOCKS_TESTED.md)
+- **Total Suite Latency**: `611,888.99 ms`
+- **Empirical DX Findings Captured**: `10` verified behaviors recorded in [`docs/WHAT_WE_LEARNED.md`](docs/WHAT_WE_LEARNED.md) and [`docs/BUILDING_BLOCKS_TESTED.md`](docs/BUILDING_BLOCKS_TESTED.md)
 
 ### Dual-Pass Consensus Audit (`ConsensusAuditor.audit_claim`)
 
@@ -130,6 +130,6 @@ All probe and audit figures below are captured directly in [`fixtures/calibrated
 - Architecture Decision Record: [`docs/adr/0001-isolated-venv-and-real-runtime-loopback-seam.md`](docs/adr/0001-isolated-venv-and-real-runtime-loopback-seam.md)
 - Specification & Testing Seams: [`docs/specs/openminion-consensus-verifier.md`](docs/specs/openminion-consensus-verifier.md)
 - Building-Block Matrix (10/10 Live): [`docs/BUILDING_BLOCKS_TESTED.md`](docs/BUILDING_BLOCKS_TESTED.md)
-- OpenMinion 0.1 Empirical DX Findings (9 Findings): [`docs/WHAT_WE_LEARNED.md`](docs/WHAT_WE_LEARNED.md)
+- OpenMinion 0.1 Empirical DX Findings (10 Findings): [`docs/WHAT_WE_LEARNED.md`](docs/WHAT_WE_LEARNED.md)
 - Calibrated Sample Fixture: [`fixtures/calibrated_sample_run.json`](fixtures/calibrated_sample_run.json)
 - Upstream PR Template Draft: [`docs/PR_SUBMISSION_DRAFT.md`](docs/PR_SUBMISSION_DRAFT.md)
