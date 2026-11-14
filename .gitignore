@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.env
+.openminion/
+.openminion-state/
+artifacts/*.mp4
+artifacts/frames/
+.scratch/
+*.egg-info/
+dist/
+build/
