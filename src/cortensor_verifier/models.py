@@ -54,6 +54,53 @@ class ConsensusVerdict(BaseModel):
     requires_human_review: bool = False
 
 
+ApprovalModeLiteral = Literal["allow_once", "deny", "pause"]
+PublicationStatusLiteral = Literal["not_requested", "published", "denied", "paused"]
+
+
+class PublicationResult(BaseModel):
+    """Outcome of approval-gated consensus publication via openminion Handoff."""
+
+    requested: bool = False
+    published: bool = False
+    publication_status: PublicationStatusLiteral = "not_requested"
+    claim_id: str = ""
+    final_verdict: VerdictLiteral | None = None
+    approval_mode: ApprovalModeLiteral | None = None
+    thread_id: str | None = None
+    approval_id: str | None = None
+    confirmation_prompt: str = ""
+    denial_reason: str = ""
+    handoff_target: str = "publisher"
+    log_path: str | None = None
+    run_id: str | None = None
+
+
+class PassTelemetry(BaseModel):
+    """Measured request, token, and latency telemetry for a single agent pass."""
+
+    pass_role: str = Field(..., min_length=1)
+    requests: int = Field(default=0, ge=0)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
+    tool_calls: int = Field(default=0, ge=0)
+    tool_errors: int = Field(default=0, ge=0)
+
+
+class TelemetrySummary(BaseModel):
+    """Aggregated telemetry across coordinator, subagents, and publication runs."""
+
+    requests: int = Field(default=0, ge=0)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    total_latency_ms: int = Field(default=0, ge=0)
+    per_pass: dict[str, PassTelemetry] = Field(default_factory=dict)
+    turn_telemetries: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class AuditRunBundle(BaseModel):
     """Complete audit artifact emitted for CLI output, verification, and replay."""
 
@@ -64,6 +111,7 @@ class AuditRunBundle(BaseModel):
     tool_calls: list[str] = Field(default_factory=list)
     run_id: str | None = None
     session_id: str | None = None
+    publication: PublicationResult | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -59,11 +59,56 @@ def build_parser() -> argparse.ArgumentParser:
         "--data-root",
         help="Isolated state root directory (.openminion-state).",
     )
-    audit_parser.add_argument(
+    pass_mode = audit_parser.add_mutually_exclusive_group()
+    pass_mode.add_argument(
         "--single-pass",
+        dest="single_pass",
         action="store_true",
         default=True,
-        help="Execute single-pass structured audit (default in C1).",
+        help="Execute single-pass structured audit (default).",
+    )
+    pass_mode.add_argument(
+        "--multi-pass",
+        dest="single_pass",
+        action="store_false",
+        help="Execute dual-perspective corroborator/skeptic subagent consensus audit.",
+    )
+    audit_parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Session identifier for multi-turn continuity and isolated MemoryBundle.",
+    )
+    audit_parser.add_argument(
+        "--publish",
+        action="store_true",
+        default=False,
+        help="Route verified ConsensusVerdict through approval-gated Handoff publication.",
+    )
+    audit_parser.add_argument(
+        "--approval-mode",
+        choices=("allow_once", "deny", "pause"),
+        default=None,
+        help="Policy confirmation mode for --publish (defaults fail-closed to pause).",
+    )
+    audit_parser.add_argument(
+        "--resume-thread-id",
+        default=None,
+        help="Paused publication thread_id to resume with --approval-mode.",
+    )
+    audit_parser.add_argument(
+        "--approval-id",
+        default=None,
+        help="Optional explicit authorization identifier for allow_once replay checks.",
+    )
+    audit_parser.add_argument(
+        "--publication-log",
+        default=None,
+        help="Optional JSONL path for published verdicts (defaults under data_root).",
+    )
+    audit_parser.add_argument(
+        "--memory-bundle-out",
+        default=None,
+        help="Optional file path to export the session MemoryBundle JSON.",
     )
     audit_parser.add_argument(
         "--max-retries",
@@ -101,7 +146,17 @@ def _run_audit(args: argparse.Namespace) -> int:
         provider_retry_max_attempts=args.max_retries,
         timeout_seconds=args.timeout_seconds,
     ) as auditor:
-        bundle = auditor.audit_claim(dossier, single_pass=bool(args.single_pass))
+        bundle = auditor.audit_claim(
+            dossier,
+            single_pass=bool(args.single_pass),
+            session_id=args.session_id,
+            thread_id=args.resume_thread_id,
+            publish=bool(args.publish),
+            approval_mode=args.approval_mode,
+            approval_id=args.approval_id,
+            publication_log_path=args.publication_log,
+            memory_bundle_out=args.memory_bundle_out,
+        )
 
     rendered = bundle.model_dump_json(indent=2)
     if args.output:
