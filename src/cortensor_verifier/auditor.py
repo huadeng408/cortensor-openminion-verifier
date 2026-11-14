@@ -377,11 +377,14 @@ class ConsensusAuditor:
         )
         return (
             f"{role_directive} "
-            "Use the provided READ_ONLY evidence tools to gather and verify sources, then respond "
-            "with ONLY valid JSON matching the VerifierPassResult schema: "
-            "{verdict: 'SUPPORTED'|'REFUTED'|'INCONCLUSIVE', confidence: float in [0,1], "
-            "rationale: str, citations: [{source_id, title, url, excerpt, published_at}], "
-            f"pass_role: '{pass_role}'}}."
+            "Use the provided READ_ONLY evidence tools (calling at most one tool per step; never batch parallel "
+            "tool calls or emit extra task_update fields) to gather and verify sources, then respond "
+            "with ONLY a single raw RFC-8259 JSON object using double quotes and zero prose or markdown fences "
+            "matching the VerifierPassResult schema: "
+            '{"verdict": "SUPPORTED"|"REFUTED"|"INCONCLUSIVE", "confidence": 0.9, '
+            '"rationale": "concise factual rationale", '
+            '"citations": [{"source_id": "...", "title": "...", "url": "...", "excerpt": "...", "published_at": "..."}], '
+            f'"pass_role": "{pass_role}"}}'
         )
 
     def _session_bundle_path(self, session_id: str) -> Path:
@@ -584,8 +587,19 @@ class ConsensusAuditor:
         return (
             f"{session_context}"
             f"Audit the following Claim Dossier as the '{pass_role}' verifier pass.\n"
-            "Inspect public evidence using the read-only tools before issuing your structured JSON verdict.\n\n"
-            f"Claim Dossier:\n{serialized}"
+            "Inspect public evidence using the read-only tools (calling at most one tool per step) "
+            "before issuing your structured JSON verdict.\n\n"
+            f"Claim Dossier:\n{serialized}\n\n"
+            "FINAL OUTPUT REQUIREMENT: Reply with ONLY a single raw RFC-8259 JSON object "
+            "(double quotes, zero prose prefix, zero markdown code fences) conforming to "
+            "VerifierPassResult where verdict is one of SUPPORTED, REFUTED, or INCONCLUSIVE, "
+            "confidence is a float between 0.0 and 1.0, citations is a list of EvidenceCitation "
+            f'objects (each requiring non-empty source_id, title, and excerpt), and pass_role is "{pass_role}".\n'
+            'Example shape: {"verdict": "SUPPORTED", "confidence": 0.9, '
+            '"rationale": "concise factual rationale citing retrieved evidence", '
+            '"citations": [{"source_id": "src-1", "title": "...", "url": "https://...", '
+            '"excerpt": "...", "published_at": "..."}], '
+            f'"pass_role": "{pass_role}"}}'
         )
 
     def _extract_tool_calls(self, result: AgentRunResult[Any]) -> list[str]:
@@ -634,6 +648,12 @@ class ConsensusAuditor:
             output = output.model_copy(update={"pass_role": pass_role})
         return output
 
+    def _turn_timeout(self) -> float | None:
+        if self.timeout_seconds is None:
+            return None
+        # Preserve OpenMinion's 90s turn floor for inner retries while extending for slow reasoning LLMs.
+        return float(max(90, int(self.timeout_seconds)))
+
     def _execute_single_pass(
         self,
         dossier: ClaimDossier,
@@ -661,10 +681,12 @@ class ConsensusAuditor:
             forced_tools=forced_tools,
             output_type=VerifierPassResult,
         )
+        run_session_id = f"{session_id}:{pass_role}:{uuid4().hex[:8]}" if session_id else None
         run_result = agent.run(
             self._build_prompt(dossier, pass_role, session_context=session_context),
-            session_id=session_id,
+            session_id=run_session_id,
             approval_callback=self._read_only_approval_guard,
+            timeout_seconds=self._turn_timeout(),
         )
         return self._coerce_pass_result(run_result, pass_role), run_result
 
@@ -696,11 +718,18 @@ class ConsensusAuditor:
                 instructions=self._build_instructions(role),
                 tools=list(self.tools),
                 output_type=VerifierPassResult,
+                timeout_seconds=(
+                    max(90, int(self.timeout_seconds))
+                    if self.timeout_seconds is not None
+                    else None
+                ),
             )
+            pass_session_id = f"{session_id}:{role}:{uuid4().hex[:8]}" if session_id else None
             run_result = child.run(
                 self._build_prompt(dossier, role, session_context=session_context),
-                session_id=session_id,
+                session_id=pass_session_id,
                 approval_callback=self._read_only_approval_guard,
+                timeout_seconds=self._turn_timeout(),
             )
             outcomes.append((role, self._coerce_pass_result(run_result, role), run_result))
         return outcomes
@@ -732,7 +761,8 @@ class ConsensusAuditor:
             model=self.model,
             instructions=(
                 "Execute publish_consensus_verdict once with the provided ConsensusVerdict "
-                "fields and confirm the written publication receipt."
+                "fields (do not emit extra task_update fields) and return a concise "
+                "confirmation of the written publication receipt."
             ),
             tools=[publish_tool],
         )
@@ -750,7 +780,8 @@ class ConsensusAuditor:
             model=self.model,
             instructions=(
                 "Delegate verified ConsensusVerdict publication by calling "
-                "transfer_to_publisher exactly once with the verdict payload."
+                "transfer_to_publisher exactly once with the verdict payload, then "
+                "immediately confirm publication cleanly."
             ),
             tools=[],
             handoffs=[handoff],
@@ -891,6 +922,7 @@ class ConsensusAuditor:
                     pub_prompt,
                     session_id=pub_session_id,
                     approval_callback=_single_use_cb,
+                    timeout_seconds=self._turn_timeout(),
                 )
             finally:
                 pub_rt.action_policy.revoke_grant(grant_id)
@@ -930,6 +962,7 @@ class ConsensusAuditor:
                 pub_prompt,
                 session_id=pub_session_id,
                 approval_callback=_deny_cb,
+                timeout_seconds=self._turn_timeout(),
             )
             return (
                 PublicationResult(
@@ -954,6 +987,7 @@ class ConsensusAuditor:
             pub_prompt,
             session_id=pub_session_id,
             approval_callback=None,
+            timeout_seconds=self._turn_timeout(),
         )
         paused_tid = coord_res.thread_id or f"{pub_session_id}:paused"
         pending_id = coord_res.metadata.get("pending_confirmation_command_id")
@@ -1077,6 +1111,7 @@ class ConsensusAuditor:
                 "deny",
                 session_id=pub_session_id,
                 thread_id=thread_id,
+                timeout_seconds=self._turn_timeout(),
             )
             self._save_paused_thread_snapshot(
                 thread_id=thread_id,
@@ -1175,6 +1210,7 @@ class ConsensusAuditor:
                 "allow_once",
                 session_id=pub_session_id,
                 thread_id=thread_id,
+                timeout_seconds=self._turn_timeout(),
             )
         finally:
             pub_rt.action_policy.revoke_grant(grant_id)

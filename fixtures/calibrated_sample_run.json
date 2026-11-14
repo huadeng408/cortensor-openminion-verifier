@@ -1,0 +1,448 @@
+{
+  "audit_bundle": {
+    "claim_id": "delphi-btc-etf-2024",
+    "preset": "openai-compatible",
+    "dossier": {
+      "claim_id": "delphi-btc-etf-2024",
+      "title": "US Spot Bitcoin ETP Approval (January 2024)",
+      "claim": "The U.S. SEC approved the listing and trading of multiple spot Bitcoin exchange-traded products on January 10, 2024.",
+      "market_question": "Did the U.S. SEC approve spot Bitcoin ETPs on January 10, 2024?",
+      "resolution_criteria": "Resolve SUPPORTED only if official SEC approval orders or Chair statement confirm approval dated 2024-01-10.",
+      "source_hints": [
+        "sec-spot-btc-2024-01-10",
+        "federal-register-34-99306"
+      ],
+      "tags": [
+        "delphi",
+        "regulation",
+        "crypto-market"
+      ],
+      "metadata": {
+        "market_id": "delphi-mkt-2024-001",
+        "category": "regulatory-milestone"
+      }
+    },
+    "consensus": {
+      "claim_id": "delphi-btc-etf-2024",
+      "final_verdict": "SUPPORTED",
+      "agreement_score": 0.98,
+      "mean_confidence": 0.94,
+      "disagreement_summary": "Corroborator and skeptic agreed on SUPPORTED (confidence gap 0.04).",
+      "passes": [
+        {
+          "verdict": "SUPPORTED",
+          "confidence": 0.96,
+          "rationale": "Primary SEC sources confirm the claim: Chair Gensler's January 10, 2024 statement says the Commission approved listing and trading of multiple spot bitcoin ETP shares that day, and SEC Release No. 34-99306 is the order granting accelerated approval of proposed rule changes to list and trade Bitcoin-based commodity-based trust shares dated January 10, 2024.",
+          "citations": [
+            {
+              "source_id": "sec-spot-btc-2024-01-10",
+              "title": "Statement on the Approval of Spot Bitcoin Exchange-Traded Products",
+              "url": "https://www.sec.gov/newsroom/speeches-statements/gensler-statement-spot-bitcoin-011023",
+              "excerpt": "Today, the Commission approved the listing and trading of a number of spot bitcoin exchange-traded product (ETP) shares on January 10, 2024.",
+              "published_at": "2024-01-10"
+            },
+            {
+              "source_id": "federal-register-34-99306",
+              "title": "SEC Release No. 34-99306 Self-Regulatory Organizations Order",
+              "url": "https://www.sec.gov/files/rules/sro/nysearca/2024/34-99306.pdf",
+              "excerpt": "Order Granting Accelerated Approval of Proposed Rule Changes to List and Trade Shares of Bitcoin-Based Commodity-Based Trust Shares dated January 10, 2024.",
+              "published_at": "2024-01-10"
+            }
+          ],
+          "pass_role": "corroborator"
+        },
+        {
+          "verdict": "SUPPORTED",
+          "confidence": 0.92,
+          "rationale": "Skeptic review found no material contradiction of the claim. The Chair statement dated 2024-01-10 says the Commission approved listing and trading of a number of spot bitcoin ETP shares that day, and SEC Release No. 34-99306 is an official order granting accelerated approval of proposed rule changes to list and trade Bitcoin-based ETP shares, also dated January 10, 2024. Public-evidence search returned those two official records as the only on-point matches. Residual caveats (Chair-statement URL slug 011023; source_id federal-register-34-99306 resolving to an SEC PDF rather than federalregister.gov) do not change the dated approval. Resolution criteria requiring official SEC approval orders or a Chair statement dated 2024-01-10 are therefore met.",
+          "citations": [
+            {
+              "source_id": "sec-spot-btc-2024-01-10",
+              "title": "Statement on the Approval of Spot Bitcoin Exchange-Traded Products",
+              "url": "https://www.sec.gov/newsroom/speeches-statements/gensler-statement-spot-bitcoin-011023",
+              "excerpt": "Today, the Commission approved the listing and trading of a number of spot bitcoin exchange-traded product (ETP) shares on January 10, 2024.",
+              "published_at": "2024-01-10"
+            },
+            {
+              "source_id": "federal-register-34-99306",
+              "title": "SEC Release No. 34-99306 Self-Regulatory Organizations Order",
+              "url": "https://www.sec.gov/files/rules/sro/nysearca/2024/34-99306.pdf",
+              "excerpt": "Order Granting Accelerated Approval of Proposed Rule Changes to List and Trade Shares of Bitcoin-Based Commodity-Based Trust Shares dated January 10, 2024.",
+              "published_at": "2024-01-10"
+            }
+          ],
+          "pass_role": "skeptic"
+        }
+      ],
+      "requires_human_review": false
+    },
+    "tool_calls": [
+      "load_delphi_market_fixture",
+      "fetch_source_excerpt",
+      "search_public_evidence"
+    ],
+    "run_id": "91e722a8328945f68eaeaa24ded7e1a2",
+    "session_id": "cal-btc-etf-01",
+    "publication": {
+      "requested": true,
+      "published": true,
+      "publication_status": "published",
+      "claim_id": "delphi-btc-etf-2024",
+      "final_verdict": "SUPPORTED",
+      "approval_mode": "allow_once",
+      "thread_id": "cal-btc-etf-01:publish:ba94e098:58e085aa900b41678ab487738fb4d078",
+      "approval_id": "appr-761e613be1cc",
+      "confirmation_prompt": "",
+      "denial_reason": "",
+      "handoff_target": "publisher",
+      "log_path": ".openminion-state/published_verdicts.jsonl",
+      "run_id": "da10c3759633433184f64daeac458154"
+    },
+    "metadata": {
+      "run_state": "completed",
+      "stats": {
+        "input_tokens": 37159,
+        "output_tokens": 8458,
+        "cache_read_tokens": 896,
+        "llm_calls": 7,
+        "tool_calls": 4,
+        "tool_errors": 0,
+        "duration_ms": 119866
+      },
+      "telemetry": {
+        "requests": 20,
+        "prompt_tokens": 92852,
+        "completion_tokens": 25341,
+        "total_tokens": 118193,
+        "total_latency_ms": 394205,
+        "per_pass": {
+          "corroborator": {
+            "pass_role": "corroborator",
+            "requests": 8,
+            "prompt_tokens": 42072,
+            "completion_tokens": 10446,
+            "total_tokens": 52518,
+            "latency_ms": 138410,
+            "tool_calls": 3,
+            "tool_errors": 0
+          },
+          "skeptic": {
+            "pass_role": "skeptic",
+            "requests": 7,
+            "prompt_tokens": 37159,
+            "completion_tokens": 8458,
+            "total_tokens": 45617,
+            "latency_ms": 119866,
+            "tool_calls": 4,
+            "tool_errors": 0
+          },
+          "publication": {
+            "pass_role": "publication",
+            "requests": 5,
+            "prompt_tokens": 13621,
+            "completion_tokens": 6437,
+            "total_tokens": 20058,
+            "latency_ms": 135929,
+            "tool_calls": 1,
+            "tool_errors": 0
+          }
+        },
+        "turn_telemetries": [
+          {
+            "pass_role": "corroborator",
+            "tokens_in": 42072,
+            "tokens_out": 10446,
+            "duration_ms": 138410,
+            "retries": 0,
+            "queue_wait_ms": 0
+          },
+          {
+            "pass_role": "skeptic",
+            "tokens_in": 37159,
+            "tokens_out": 8458,
+            "duration_ms": 119866,
+            "retries": 0,
+            "queue_wait_ms": 0
+          },
+          {
+            "pass_role": "publication",
+            "tokens_in": 13621,
+            "tokens_out": 6437,
+            "duration_ms": 135929,
+            "retries": 0,
+            "queue_wait_ms": 0
+          }
+        ]
+      },
+      "per_pass_stats": {
+        "corroborator": {
+          "input_tokens": 42072,
+          "output_tokens": 10446,
+          "cache_read_tokens": 1024,
+          "llm_calls": 8,
+          "tool_calls": 3,
+          "tool_errors": 0,
+          "duration_ms": 138410
+        },
+        "skeptic": {
+          "input_tokens": 37159,
+          "output_tokens": 8458,
+          "cache_read_tokens": 896,
+          "llm_calls": 7,
+          "tool_calls": 4,
+          "tool_errors": 0,
+          "duration_ms": 119866
+        },
+        "publication": {
+          "input_tokens": 13621,
+          "output_tokens": 6437,
+          "cache_read_tokens": 640,
+          "llm_calls": 5,
+          "tool_calls": 1,
+          "tool_errors": 0,
+          "duration_ms": 135929
+        }
+      },
+      "session_memory": {
+        "session_id": "cal-btc-etf-01",
+        "item_count": 1
+      },
+      "publication": {
+        "requested": true,
+        "published": true,
+        "publication_status": "published",
+        "claim_id": "delphi-btc-etf-2024",
+        "final_verdict": "SUPPORTED",
+        "approval_mode": "allow_once",
+        "thread_id": "cal-btc-etf-01:publish:ba94e098:58e085aa900b41678ab487738fb4d078",
+        "approval_id": "appr-761e613be1cc",
+        "confirmation_prompt": "",
+        "denial_reason": "",
+        "handoff_target": "publisher",
+        "log_path": ".openminion-sandbox\\state\\published_verdicts.jsonl",
+        "run_id": "da10c3759633433184f64daeac458154"
+      },
+      "calibration_status": "[Live LLM Calibrated]",
+      "calibrated_model": "grok-4.6",
+      "endpoint_host": "https://<configured-openai-compatible-relay>/v1"
+    }
+  },
+  "probe_report": {
+    "suite_name": "openminion-0.1-building-blocks",
+    "sdk_version": "0.1.21",
+    "preset": "openai-compatible",
+    "model": "grok-4.7",
+    "base_url_host": "https://<configured-openai-compatible-relay>/v1",
+    "calibration_status": "[Live LLM Calibrated]",
+    "generated_at": "2026-11-14T16:01:03.834581+00:00",
+    "total_probes": 10,
+    "passed_probes": 10,
+    "failed_probes": 0,
+    "total_latency_ms": 604418.99,
+    "probes": [
+      {
+        "probe_id": "agent_runtime_isolation",
+        "name": "Agent & APIRuntime Isolation",
+        "passed": true,
+        "detail": "Isolated agents.json verified secret-free; SQLite DB isolated under data_root (14 db file(s)); run_id=2d700e1618cd402c803fd8c2f68ddb2d.",
+        "latency_ms": 6576.08,
+        "metadata": {
+          "db_count": 14,
+          "run_id": "2d700e1618cd402c803fd8c2f68ddb2d",
+          "secret_free_config": true
+        }
+      },
+      {
+        "probe_id": "structured_pydantic_output",
+        "name": "Structured Pydantic Output & Validation Error",
+        "passed": true,
+        "detail": "Validated _ProbeStructuredOutput (status=OK, score=0.99) and verified AgentOutputValidationError negative contract.",
+        "latency_ms": 207213.19,
+        "metadata": {
+          "fallback_stub_used": false,
+          "negative_validation_error": true,
+          "score": 0.99,
+          "status": "OK"
+        }
+      },
+      {
+        "probe_id": "tool_and_forced_tools",
+        "name": "@tool Registration & forced_tools Execution",
+        "passed": true,
+        "detail": "Executed auto tool (probe_lookup_fact) and forced_tools=(probe_echo_tag) cleanly.",
+        "latency_ms": 77598.94,
+        "metadata": {
+          "forced_tool": "probe_echo_tag",
+          "invocations": [
+            "probe_lookup_fact:cortensor-poi",
+            "probe_echo_tag:forced-c3"
+          ]
+        }
+      },
+      {
+        "probe_id": "policy_confirmation_gate",
+        "name": "Policy Gate (@tool dangerous=True Allow & Deny)",
+        "passed": true,
+        "detail": "Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') triggered approval_callback: allow executed att-allow; deny blocked att-deny.",
+        "latency_ms": 68637.14,
+        "metadata": {
+          "allow_executed": true,
+          "callback_count": 2,
+          "deny_blocked": true,
+          "executed_ids": [
+            "att-allow"
+          ]
+        }
+      },
+      {
+        "probe_id": "session_continuity",
+        "name": "Session Continuity & Cross-Session Isolation",
+        "passed": true,
+        "detail": "Session probe-sess-a-5b958e6d (thread probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8) recalled marker across turns; isolated session probe-sess-b-c3d87288 had zero leakage.",
+        "latency_ms": 92405.48,
+        "metadata": {
+          "same_session_recalled": true,
+          "second_session_isolated": true,
+          "session_a": "probe-sess-a-5b958e6d",
+          "session_b": "probe-sess-b-c3d87288",
+          "thread_id": "probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8"
+        }
+      },
+      {
+        "probe_id": "memory_bundle_portability",
+        "name": "MemoryBundle Export, Save, Load & Import",
+        "passed": true,
+        "detail": "Roundtripped MemoryBundle vmemory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).",
+        "latency_ms": 1.99,
+        "metadata": {
+          "bundle_version": "memory_bundle.v1",
+          "invalid_mode_rejected": true,
+          "item_count": 1
+        }
+      },
+      {
+        "probe_id": "subagent_delegation",
+        "name": "subagent() & SubagentRunContext Delegation",
+        "passed": true,
+        "detail": "Child subagent (probe-corroborator) ran with isolated SubagentRunContext (context_id=subagent-bf6c16b7d24d) without closing parent runtime.",
+        "latency_ms": 30651.67,
+        "metadata": {
+          "context_id": "subagent-bf6c16b7d24d",
+          "parent_transcript_inherited": false,
+          "subagent_calls": [
+            "subagent-check"
+          ],
+          "tool_allowlist": [
+            "probe_subagent_tool"
+          ]
+        }
+      },
+      {
+        "probe_id": "agent_handoff",
+        "name": "Handoff Peer Agent Transfer Tool",
+        "passed": true,
+        "detail": "Handoff registered 'transfer_to_specialist' and executed peer specialist turn cleanly (invocations=1, verbatim_ack=False).",
+        "latency_ms": 110097.21,
+        "metadata": {
+          "handoff_invocations": 1,
+          "run_id": "31660b20ead3480d837e72c95be70f96",
+          "tool_name": "transfer_to_specialist",
+          "verbatim_ack": false
+        }
+      },
+      {
+        "probe_id": "submit_turn_streaming_telemetry",
+        "name": "submit_turn() Streaming TurnChunk & TurnTelemetry",
+        "passed": true,
+        "detail": "Collected 12 TurnChunk(s) (status, final_text); TurnTelemetry(duration_ms=6281, tokens_in=0, tokens_out=0, retries=0, queue_wait_ms=0); stats(input_tokens=11841, output_tokens=430).",
+        "latency_ms": 6278.02,
+        "metadata": {
+          "chunk_count": 12,
+          "chunk_kinds": [
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "status",
+            "final_text",
+            "status"
+          ],
+          "duration_ms": 6281,
+          "queue_wait_ms": 0,
+          "retries": 0,
+          "stats": {
+            "cache_read_tokens": 1152,
+            "duration_ms": 6149,
+            "input_tokens": 11841,
+            "llm_calls": 1,
+            "output_tokens": 430,
+            "tool_calls": 0,
+            "tool_errors": 0
+          },
+          "stats_input_tokens": 11841,
+          "stats_output_tokens": 430,
+          "telemetry_metadata_mismatch": true,
+          "tokens_in": 0,
+          "tokens_out": 0
+        }
+      },
+      {
+        "probe_id": "error_and_timeout_contracts",
+        "name": "ProviderError Retries, Timeout & Connection Reuse Policy",
+        "passed": true,
+        "detail": "Verified http_connection_reuse_enabled=False; HTTP 500 raised ProviderError after 6 attempt(s); slow stub (1.5s vs 1.0s timeout) raised TurnTimeoutError.",
+        "latency_ms": 4595.94,
+        "metadata": {
+          "http_500_attempts": 6,
+          "http_connection_reuse_enabled": false,
+          "provider_error_raised": true,
+          "timeout_exception": "TurnTimeoutError",
+          "timeout_raised": true
+        }
+      }
+    ],
+    "dx_findings": [
+      {
+        "title": "Internal Structured Classifier Turns (FreshnessContract / FinalizationStatus / ClosureJudgment)",
+        "observation": "openminion==0.1.21 emits out-of-band tool_choice='submit_output' requests with JSON schema titles `FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment`. In closure evaluation, `[JUDGE CONTEXT]` supplies `action_summary:` while `final_close_message()` prefers `ClosureJudgment.final_answer` over `action_result.summary`, so gateways/stubs handling `ClosureJudgment` must preserve `action_summary` / `closure_action_summary` or risk overwriting structured JSON answers."
+      },
+      {
+        "title": "Explicit thread_id Required for Multi-Turn Agent.run(session_id=...) Continuity",
+        "observation": "Calling `Agent.run(..., session_id=session_a)` returns an allocated `thread_id` (`metadata['thread_id']`); without passing `thread_id=turn1.thread_id` on subsequent calls, `openminion==0.1.21` starts a fresh conversation thread even with matching `session_id`. Forwarding both `session_id` and `thread_id` retains transcript history while separate `session_id` values remain isolated."
+      },
+      {
+        "title": "AnthropicProvider (/v1/messages + x-api-key) vs OpenAI-Compatible & Cortensor Adapters",
+        "observation": "`AnthropicProvider` sends POST `{base_url}/messages` with `x-api-key` and `anthropic-version` headers (`accept: text/event-stream` for streaming), whereas `OpenAIProvider` and `CortensorProvider` use Bearer auth (`Authorization: Bearer ...`) against `/chat/completions` or `/api/v2/completions`."
+      },
+      {
+        "title": "Inline Boolean approval_callback vs Async RuntimeTurnHandle.resolve_approval()",
+        "observation": "`Agent.run(..., approval_callback=...)` bridges a synchronous/awaitable boolean guard onto the brain worker thread (observed 2 callback invocations across allow & deny gates on `@tool(dangerous=True, min_scope='WRITE_SAFE')`). In contrast, `APIRuntime.submit_turn()` sets `approval_transport='turn_stream'` and requires stream consumers to resolve `approval` chunks via `handle.resolve_approval(approval_id=..., decision='allow_once'|'deny')` with bounded wait timeouts."
+      },
+      {
+        "title": "Windows SQLite Worktree Isolation & http_connection_reuse_enabled=False",
+        "observation": "Passing explicit `home_root` and `data_root` isolates `.openminion/agents.json` and SQLite/Alembic state per worktree on Windows. Disabling `http_connection_reuse_enabled=False` avoids persistent `httpx.Client` socket reuse (`http_client_for_config()` returns `None` and falls back to `urllib.request.urlopen`), preventing stale keep-alive errors across ephemeral or loopback endpoints."
+      },
+      {
+        "title": "Layered Retry Multiplication, SSE Usage Gating & TurnTelemetry vs stats",
+        "observation": "On HTTP 500 with `provider_retry_max_attempts=2`, observed 6 HTTP attempts because `LLMCTLBridgeProvider` adds inner transport retries (`max_retries=2`) inside `BrainRunner`'s outer retry loop. `submit_turn()` captured 12 TurnChunk(s) with `TurnTelemetry(duration_ms=6281, tokens_in=0, tokens_out=0)` vs `TurnResponse.stats(input_tokens=11841, output_tokens=430)`: `daemon.py` reads `metadata.get('usage_prompt_tokens')`, whereas the runtime populates `total_input_tokens_used` and `stats`. Additionally, `OpenAIProvider.stream()` skips SSE `usage` chunks unless `provider_identity={'service_vendor': 'openai'}` enables `preserve_response_facts`."
+      },
+      {
+        "title": "90s Turn-Timeout Default, Handoff Forwarding Gap & Live Paraphrasing",
+        "observation": "`Agent.run(..., timeout_seconds=None)` defaults internal turn timeout to `90.0s` regardless of `OpenMinionConfig` provider HTTP timeouts unless `timeout_seconds` is explicitly forwarded to BOTH `Agent.run(timeout_seconds=...)` and `subagent(timeout_seconds=...)`. Multi-tool reasoning turns routinely span multiple round-trips (`classifier + tool + finalization`). Furthermore, in `openminion/api/handoff.py:169`, `build_delegate_tool()` calls `handoff.target.run(message)` without forwarding caller `timeout_seconds` or `approval_callback`, leaving peer handoff targets on the `90.0s` default turn timeout and requiring `PolicyGrantInput` on the target runtime for `allow_once` gating. Additionally, live LLMs execute `Handoff` (`transfer_to_specialist`) cleanly and paraphrase the specialist confirmation in coordinator prose rather than echoing synthetic marker tokens verbatim."
+      },
+      {
+        "title": "Structured Output Envelope Collision (`respond(answer, freshness)` + `agent_id:` Prefix)",
+        "observation": "In `openminion==0.1.21`, `runtime.run_turn()` formats `body` with an `f'{agent_id}: '` prefix, causing `Agent._coerce_output()`'s initial `output_type.model_validate_json(text)` to fail and rely on `_extract_json_object(text)`. Meanwhile, `BrainRunner`'s entry prompt instructs direct replies using `respond(answer=..., freshness=...)`; some live models occasionally emit that outer envelope as assistant text (`agent: {\"answer\": \"{...}\", \"freshness\": {...}}`), causing `_extract_json_object()` to extract the outer `freshness` wrapper instead of the inner JSON payload and raise `AgentOutputValidationError`. Explicitly commanding single-line RFC-8259 double-quoted JSON and avoiding unquoted pseudo-schemas improves compliance."
+      },
+      {
+        "title": "Shared Session & Parallel Tool-Call `task_update` Collision (`resolve_entry_task_update`)",
+        "observation": "In `openminion/modules/brain/loop/context/task_context.py:153-191`, `resolve_entry_task_update()` raises `ValueError` (`'Missing task_update'` or `'Exactly one task_update is allowed per entry response'`), turning the reply into the fallback clarification `'I could not safely update the task conditions...'` whenever an active session receives sequential `subagent()` calls sharing the same raw `session_id` or when a model batches multiple tool calls carrying duplicate `task_update` sidecars. Giving each subagent pass an isolated runtime `session_id` while persisting cross-turn citations in explicit `MemoryBundle` state avoids the crash."
+      }
+    ]
+  }
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -10,6 +11,12 @@ from typing import Sequence
 from openminion.api import AgentOutputValidationError, ProviderError
 
 from cortensor_verifier.auditor import ConsensusAuditor
+from cortensor_verifier.demo_renderer import (
+    DEFAULT_DEMO_DURATION_SECONDS,
+    DEFAULT_DEMO_FPS,
+    load_demo_inputs,
+    render_demo_video,
+)
 from cortensor_verifier.probe import (
     BuildingBlockProbeRunner,
     assert_no_plaintext_secrets,
@@ -190,6 +197,47 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         help="Optional file path to write the ProbeSuiteReport JSON.",
     )
+
+    demo_parser = subparsers.add_parser(
+        "render-demo",
+        help="Render a captioned 1080p MP4 walkthrough from AuditRunBundle & ProbeSuiteReport JSON.",
+    )
+    demo_parser.add_argument(
+        "--sample-json",
+        help="Combined fixture JSON containing audit_bundle and probe_report (defaults to fixtures/calibrated_sample_run.json).",
+    )
+    demo_parser.add_argument(
+        "--audit-json",
+        help="Optional AuditRunBundle JSON file override.",
+    )
+    demo_parser.add_argument(
+        "--probe-json",
+        help="Optional ProbeSuiteReport JSON file override.",
+    )
+    demo_parser.add_argument(
+        "-o",
+        "--output",
+        default="artifacts/cortensor_hackathon5_demo.mp4",
+        help="Output MP4 file path (default: artifacts/cortensor_hackathon5_demo.mp4).",
+    )
+    demo_parser.add_argument(
+        "--duration-seconds",
+        type=int,
+        default=DEFAULT_DEMO_DURATION_SECONDS,
+        help="Target video duration in seconds (60-300 required by default).",
+    )
+    demo_parser.add_argument(
+        "--fps",
+        type=int,
+        default=DEFAULT_DEMO_FPS,
+        help="Video frames per second.",
+    )
+    demo_parser.add_argument(
+        "--allow-short-test",
+        action="store_true",
+        default=False,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -263,6 +311,37 @@ def _run_probe(args: argparse.Namespace) -> int:
     return 0 if report.all_passed else 1
 
 
+def _run_render_demo(args: argparse.Namespace) -> int:
+    audit_data, probe_data = load_demo_inputs(
+        sample_json=args.sample_json,
+        audit_json=args.audit_json,
+        probe_json=args.probe_json,
+    )
+    result = render_demo_video(
+        output_path=args.output,
+        audit_bundle=audit_data,
+        probe_report=probe_data,
+        duration_seconds=args.duration_seconds,
+        fps=args.fps,
+        allow_short_for_tests=bool(args.allow_short_test),
+    )
+    summary = {
+        "output_path": str(result.output_path),
+        "width": result.width,
+        "height": result.height,
+        "fps": result.fps,
+        "duration_seconds": result.duration_seconds,
+        "frame_count": result.frame_count,
+        "scene_count": result.scene_count,
+        "file_size_bytes": result.file_size_bytes,
+        "calibration_status": result.calibration_status,
+        "model": result.model,
+        "claim_id": result.claim_id,
+    }
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entrypoint returning process exit status."""
     parser = build_parser()
@@ -272,6 +351,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_audit(args)
         if args.command == "probe":
             return _run_probe(args)
+        if args.command == "render-demo":
+            return _run_render_demo(args)
         parser.error(f"Unsupported command: {args.command}")
     except (
         AgentOutputValidationError,

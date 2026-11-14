@@ -117,23 +117,31 @@ class ProbeSuiteReport(BaseModel):
         return self.total_probes > 0 and self.failed_probes == 0
 
 
+_PUBLIC_SAFE_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "api.openai.com", "cortensor.network"})
+
+
 def sanitize_base_url(base_url: str | None) -> str:
-    """Return scheme/host/path without embedded credentials or query strings."""
+    """Return scheme/host/path without embedded credentials, query strings, or private relay hosts."""
     raw = str(base_url or "").strip()
     if not raw:
         return "preset-default"
     parsed = urlparse(raw)
     if not parsed.scheme or not parsed.netloc:
         return raw.split("?", 1)[0]
-    host = parsed.hostname or parsed.netloc
-    port_suffix = f":{parsed.port}" if parsed.port else ""
+    host = (parsed.hostname or parsed.netloc).strip()
+    host_lower = host.lower()
     path = parsed.path or ""
-    return f"{parsed.scheme}://{host}{port_suffix}{path}"
+    if host_lower in _PUBLIC_SAFE_HOSTS or host_lower.endswith(".cortensor.network"):
+        port_suffix = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.scheme}://{host}{port_suffix}{path}"
+    return f"{parsed.scheme}://<configured-openai-compatible-relay>{path}"
 
 
 def infer_calibration_status(base_url: str | None) -> str:
     """Distinguish local loopback stub baselines from C4 live LLM runs."""
     raw = str(base_url or "").strip()
+    if "<configured-openai-compatible-relay>" in raw:
+        return "[Live LLM Calibrated]"
     host = (urlparse(raw).hostname or "").lower() if raw else ""
     if host in {"127.0.0.1", "localhost", "::1"}:
         return "[Loopback Stub Baseline — awaiting C4 live LLM calibration]"
@@ -375,6 +383,11 @@ class BuildingBlockProbeRunner:
                 raise ValueError(f"Unknown probe_id(s): {', '.join(unknown)}")
             self.probe_ids = tuple(dict.fromkeys(requested))
 
+    def _turn_timeout(self) -> float | None:
+        if self.timeout_seconds is None:
+            return None
+        return float(max(90, int(self.timeout_seconds)))
+
     def _resolve_roots(self) -> tuple[Path, Path, tempfile.TemporaryDirectory[str] | None]:
         if self.home_root is not None or self.data_root is not None:
             home, data, _ = resolve_isolated_paths(
@@ -598,7 +611,10 @@ class BuildingBlockProbeRunner:
                 name="probe-isolation-agent",
                 instructions="Respond concisely with ISOLATION_OK.",
             )
-            result = agent.run("PROBE_ISOLATION: Verify runtime isolation and reply ISOLATION_OK.")
+            result = agent.run(
+                "PROBE_ISOLATION: Verify runtime isolation and reply ISOLATION_OK.",
+                timeout_seconds=self._turn_timeout(),
+            )
             assert result.text.strip(), "Agent.run returned empty text."
             assert result.run_id, "Agent.run returned no run_id."
             db_files = list(data_root.rglob("*.db"))
@@ -627,13 +643,16 @@ class BuildingBlockProbeRunner:
             agent_id=self.agent_id,
             name="probe-structured-agent",
             instructions=(
-                "Respond with ONLY valid JSON matching "
-                "{status: 'OK'|'DEGRADED', block: str, score: float in [0,1]}."
+                "Your final answer MUST be ONLY one raw RFC-8259 JSON object using double quotes "
+                "and zero prose or markdown fences, matching schema: "
+                '{"status": "OK", "block": "structured_pydantic_output", "score": 0.99}.'
             ),
             output_type=_ProbeStructuredOutput,
         )
         pos_result = positive_agent.run(
-            "PROBE_STRUCTURED: Output status='OK', block='structured_pydantic_output', score=0.99 as JSON."
+            "PROBE_STRUCTURED: Output ONLY raw JSON "
+            '{"status": "OK", "block": "structured_pydantic_output", "score": 0.99}.',
+            timeout_seconds=self._turn_timeout(),
         )
         assert isinstance(pos_result.output, _ProbeStructuredOutput)
 
@@ -651,7 +670,8 @@ class BuildingBlockProbeRunner:
         fallback_stub_used = False
         try:
             neg_agent.run(
-                "PROBE_STRUCTURED_NEGATIVE: Reply with ONLY MALFORMED_NON_JSON_PROBE and no JSON."
+                "PROBE_STRUCTURED_NEGATIVE: Reply with ONLY MALFORMED_NON_JSON_PROBE and no JSON.",
+                timeout_seconds=self._turn_timeout(),
             )
         except AgentOutputValidationError:
             negative_raised = True
@@ -717,7 +737,8 @@ class BuildingBlockProbeRunner:
             tools=[probe_lookup_fact, probe_echo_tag],
         )
         auto_res = auto_agent.run(
-            "PROBE_TOOLS_AUTO: Invoke probe_lookup_fact with topic='cortensor-poi' and report token."
+            "PROBE_TOOLS_AUTO: Invoke probe_lookup_fact with topic='cortensor-poi' and report token.",
+            timeout_seconds=self._turn_timeout(),
         )
         assert any(name == "probe_lookup_fact" for name, _ in called), (
             "Auto tool call did not execute probe_lookup_fact."
@@ -732,7 +753,8 @@ class BuildingBlockProbeRunner:
             forced_tools=["probe_echo_tag"],
         )
         forced_res = forced_agent.run(
-            "PROBE_TOOLS_FORCED: Execute forced tool probe_echo_tag with tag='forced-c3' and report echo."
+            "PROBE_TOOLS_FORCED: Execute forced tool probe_echo_tag with tag='forced-c3' and report echo.",
+            timeout_seconds=self._turn_timeout(),
         )
         assert any(name == "probe_echo_tag" for name, _ in called), (
             "forced_tools did not execute probe_echo_tag."
@@ -778,12 +800,14 @@ class BuildingBlockProbeRunner:
         allow_res = gate_agent.run(
             "PROBE_POLICY_ALLOW: Publish attestation_id='att-allow' using probe_publish_attestation.",
             approval_callback=allow_cb,
+            timeout_seconds=self._turn_timeout(),
         )
         assert "att-allow" in executed_ids, "Allowed dangerous tool did not execute."
 
         deny_res = gate_agent.run(
             "PROBE_POLICY_DENY: Attempt to publish attestation_id='att-deny' using probe_publish_attestation.",
             approval_callback=deny_cb,
+            timeout_seconds=self._turn_timeout(),
         )
         assert "att-deny" not in executed_ids, "Denied dangerous tool executed despite False callback."
         assert len(callback_events) >= 2, "approval_callback was not invoked for both allow and deny."
@@ -815,16 +839,19 @@ class BuildingBlockProbeRunner:
         turn1 = agent.run(
             "PROBE_SESSION_STORE: Remember exact verification marker SESSION_TOKEN_ALPHA_42 for this session.",
             session_id=session_a,
+            timeout_seconds=self._turn_timeout(),
         )
         assert turn1.thread_id, "Session turn1 did not allocate a thread_id."
         turn2 = agent.run(
             "PROBE_SESSION_RECALL: What exact SESSION_TOKEN marker did I ask you to remember earlier?",
             session_id=session_a,
             thread_id=turn1.thread_id,
+            timeout_seconds=self._turn_timeout(),
         )
         turn3 = agent.run(
             "PROBE_SESSION_RECALL: What exact SESSION_TOKEN marker did I ask you to remember earlier?",
             session_id=session_b,
+            timeout_seconds=self._turn_timeout(),
         )
         same_recalled = "SESSION_TOKEN_ALPHA_42" in turn2.text
         second_isolated = "SESSION_TOKEN_ALPHA_42" not in turn3.text
@@ -904,16 +931,18 @@ class BuildingBlockProbeRunner:
             name="probe-parent",
             instructions="Parent verifier coordinator.",
         )
+        eff_sub_timeout = max(90, int(self.timeout_seconds or 90))
         child = subagent(
             parent,
             name="probe-corroborator",
             instructions=(
-                "Call probe_subagent_tool(item='subagent-check') and respond with ONLY JSON "
-                "matching {status: 'OK'|'DEGRADED', block: str, score: float in [0,1]}."
+                "Call probe_subagent_tool(item='subagent-check'). Your final answer MUST be ONLY a single "
+                "valid RFC-8259 JSON object using double quotes with zero prose or explanations, matching: "
+                '{"status": "OK", "block": "subagent_delegation", "score": 0.98}.'
             ),
             tools=[probe_subagent_tool],
             output_type=_ProbeStructuredOutput,
-            timeout_seconds=10,
+            timeout_seconds=eff_sub_timeout,
         )
         ctx = child.subagent_context
         assert isinstance(ctx, SubagentRunContext)
@@ -924,7 +953,8 @@ class BuildingBlockProbeRunner:
         assert ctx.memory_posture == "none"
 
         child_res = child.run(
-            "PROBE_SUBAGENT: Invoke probe_subagent_tool(item='subagent-check') and return JSON."
+            "PROBE_SUBAGENT: Invoke probe_subagent_tool(item='subagent-check') and return JSON.",
+            timeout_seconds=float(eff_sub_timeout),
         )
         assert isinstance(child_res.output, _ProbeStructuredOutput)
         assert "subagent-check" in subagent_calls, "Child subagent did not execute scoped tool."
@@ -968,20 +998,34 @@ class BuildingBlockProbeRunner:
             ),
             handoffs=[handoff],
         )
+        handoff_invocations: list[str] = []
+
+        def _handoff_cb(name: str, _args: dict[str, Any], _aid: str) -> bool:
+            if name == resolved_name:
+                handoff_invocations.append(name)
+                return True
+            return False
+
         res = coordinator.run(
             "PROBE_HANDOFF: Transfer this verification task to specialist via transfer_to_specialist.",
-            approval_callback=lambda name, _args, _aid: name == resolved_name,
+            approval_callback=_handoff_cb,
+            timeout_seconds=self._turn_timeout(),
         )
         serialized_meta = json.dumps(res.metadata, default=str)
-        assert "SPECIALIST_ACK" in res.text or "SPECIALIST_ACK" in serialized_meta, (
-            f"Handoff did not propagate specialist output: text={res.text!r}"
+        verbatim_ack = "SPECIALIST_ACK" in res.text or "SPECIALIST_ACK" in serialized_meta
+        assert resolved_name in handoff_invocations, (
+            f"Coordinator never invoked handoff tool {resolved_name!r}."
         )
+        assert res.text.strip(), "Handoff coordinator returned empty response text."
 
         return (
-            f"Handoff registered '{resolved_name}' and executed peer specialist turn cleanly.",
+            f"Handoff registered '{resolved_name}' and executed peer specialist turn cleanly "
+            f"(invocations={len(handoff_invocations)}, verbatim_ack={verbatim_ack}).",
             {
                 "tool_name": resolved_name,
                 "run_id": res.run_id,
+                "handoff_invocations": len(handoff_invocations),
+                "verbatim_ack": verbatim_ack,
             },
         )
 
@@ -990,6 +1034,8 @@ class BuildingBlockProbeRunner:
         runtime: APIRuntime,
     ) -> tuple[str, dict[str, Any]]:
         session_id = f"probe-stream-{uuid4().hex[:8]}"
+        stream_timeout_s = max(8, int(self.timeout_seconds or 15))
+        wait_s = float(min(max(5, stream_timeout_s), 60))
         handle = runtime.submit_turn(
             payload={
                 "session_id": session_id,
@@ -999,17 +1045,19 @@ class BuildingBlockProbeRunner:
                 "target": "api-user",
                 "stream": True,
                 "deliver": False,
-                "timeout_seconds": 8,
+                "timeout_seconds": stream_timeout_s,
             }
         )
         chunks: list[TurnChunk] = []
-        deadline = time.monotonic() + 8.0
-        for chunk in handle.stream(timeout_s=5.0):
+        deadline = time.monotonic() + float(stream_timeout_s)
+        for chunk in handle.stream(timeout_s=wait_s):
             chunks.append(chunk)
             if time.monotonic() >= deadline:
-                raise TimeoutError("Exceeded 8.0s deadline while draining TurnChunk stream.")
+                raise TimeoutError(
+                    f"Exceeded {float(stream_timeout_s):.1f}s deadline while draining TurnChunk stream."
+                )
 
-        response = handle.result(timeout_s=5.0)
+        response = handle.result(timeout_s=wait_s)
         assert isinstance(response, TurnResponse)
         assert isinstance(response.telemetry, TurnTelemetry)
         assert chunks, "Expected TurnChunk events from RuntimeTurnHandle.stream()."
@@ -1208,6 +1256,43 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
                 "`metadata.get('usage_prompt_tokens')`, whereas the runtime populates `total_input_tokens_used` and `stats`. "
                 "Additionally, `OpenAIProvider.stream()` skips SSE `usage` chunks unless `provider_identity={'service_vendor': 'openai'}` "
                 "enables `preserve_response_facts`."
+            ),
+        },
+        {
+            "title": "90s Turn-Timeout Default, Handoff Forwarding Gap & Live Paraphrasing",
+            "observation": (
+                "`Agent.run(..., timeout_seconds=None)` defaults internal turn timeout to `90.0s` regardless of "
+                "`OpenMinionConfig` provider HTTP timeouts unless `timeout_seconds` is explicitly forwarded to BOTH "
+                "`Agent.run(timeout_seconds=...)` and `subagent(timeout_seconds=...)`. Multi-tool reasoning turns routinely "
+                "span multiple round-trips (`classifier + tool + finalization`). Furthermore, in "
+                "`openminion/api/handoff.py:169`, `build_delegate_tool()` calls `handoff.target.run(message)` without "
+                "forwarding caller `timeout_seconds` or `approval_callback`, leaving peer handoff targets on the `90.0s` "
+                "default turn timeout and requiring `PolicyGrantInput` on the target runtime for `allow_once` gating. "
+                "Additionally, live LLMs execute `Handoff` (`transfer_to_specialist`) cleanly and paraphrase the specialist "
+                "confirmation in coordinator prose rather than echoing synthetic marker tokens verbatim."
+            ),
+        },
+        {
+            "title": "Structured Output Envelope Collision (`respond(answer, freshness)` + `agent_id:` Prefix)",
+            "observation": (
+                "In `openminion==0.1.21`, `runtime.run_turn()` formats `body` with an `f'{agent_id}: '` prefix, causing "
+                "`Agent._coerce_output()`'s initial `output_type.model_validate_json(text)` to fail and rely on "
+                "`_extract_json_object(text)`. Meanwhile, `BrainRunner`'s entry prompt instructs direct replies using "
+                "`respond(answer=..., freshness=...)`; some live models occasionally emit that outer envelope as assistant "
+                "text (`agent: {\"answer\": \"{...}\", \"freshness\": {...}}`), causing `_extract_json_object()` to extract the "
+                "outer `freshness` wrapper instead of the inner JSON payload and raise `AgentOutputValidationError`. "
+                "Explicitly commanding single-line RFC-8259 double-quoted JSON and avoiding unquoted pseudo-schemas improves compliance."
+            ),
+        },
+        {
+            "title": "Shared Session & Parallel Tool-Call `task_update` Collision (`resolve_entry_task_update`)",
+            "observation": (
+                "In `openminion/modules/brain/loop/context/task_context.py:153-191`, `resolve_entry_task_update()` raises "
+                "`ValueError` (`'Missing task_update'` or `'Exactly one task_update is allowed per entry response'`), turning "
+                "the reply into the fallback clarification `'I could not safely update the task conditions...'` whenever an "
+                "active session receives sequential `subagent()` calls sharing the same raw `session_id` or when a model "
+                "batches multiple tool calls carrying duplicate `task_update` sidecars. Giving each subagent pass an isolated "
+                "runtime `session_id` while persisting cross-turn citations in explicit `MemoryBundle` state avoids the crash."
             ),
         },
     ]
