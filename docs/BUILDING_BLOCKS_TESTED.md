@@ -21,7 +21,7 @@
 | 3 | `tool_and_forced_tools` | @tool Registration & forced_tools Execution | **PASS** | 77598.94 | Executed auto tool (probe_lookup_fact) and forced_tools=(probe_echo_tag) cleanly. |
 | 4 | `policy_confirmation_gate` | Policy Gate (@tool dangerous=True Allow & Deny) | **PASS** | 76300.74 | Dangerous @tool(dangerous=True, min_scope='WRITE_SAFE') verified allow, deny, and fail-closed approval_callback=None pause/thread_id allow_once resume. |
 | 5 | `session_continuity` | Session Continuity & Cross-Session Isolation | **PASS** | 92405.48 | Session probe-sess-a-5b958e6d (thread probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8) recalled marker across turns; isolated session probe-sess-b-c3d87288 had zero leakage. |
-| 6 | `memory_bundle_portability` | MemoryBundle Export, Save, Load & Import | **PASS** | 1.99 | Roundtripped MemoryBundle vmemory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate). |
+| 6 | `memory_bundle_portability` | MemoryBundle Export, Save, Load & Import | **PASS** | 1.99 | Roundtripped MemoryBundle memory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate). |
 | 7 | `subagent_delegation` | subagent() & SubagentRunContext Delegation | **PASS** | 30651.67 | Child subagent (probe-corroborator) ran with isolated SubagentRunContext (context_id=subagent-bf6c16b7d24d) without closing parent runtime. |
 | 8 | `agent_handoff` | Handoff Peer Agent Transfer Tool | **PASS** | 110097.21 | Handoff registered 'transfer_to_specialist' and executed peer specialist turn cleanly (invocations=1, verbatim_ack=False). |
 | 9 | `submit_turn_streaming_telemetry` | submit_turn() Streaming TurnChunk & TurnTelemetry | **PASS** | 6278.02 | Collected 12 TurnChunk(s) (status, final_text); TurnTelemetry(duration_ms=6281, tokens_in=0, tokens_out=0, retries=0, queue_wait_ms=0); stats(input_tokens=11841, output_tokens=430). |
@@ -56,7 +56,7 @@
 
 ### `memory_bundle_portability` — MemoryBundle Export, Save, Load & Import
 - **Passed**: `True` (`1.99 ms`)
-- **Detail**: Roundtripped MemoryBundle vmemory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).
+- **Detail**: Roundtripped MemoryBundle memory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).
 - **Metadata**: `{"bundle_version": "memory_bundle.v1", "invalid_mode_rejected": true, "item_count": 1}`
 
 ### `subagent_delegation` — subagent() & SubagentRunContext Delegation

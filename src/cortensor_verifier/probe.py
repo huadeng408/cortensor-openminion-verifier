@@ -1027,7 +1027,7 @@ class BuildingBlockProbeRunner:
         assert invalid_rejected, "Invalid trust_mode did not raise InvalidArgumentError."
 
         return (
-            f"Roundtripped MemoryBundle v{loaded.version} ({imported_direct['item_count']} item) "
+            f"Roundtripped MemoryBundle {loaded.version} ({imported_direct['item_count']} item) "
             "via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).",
             {
                 "bundle_version": loaded.version,

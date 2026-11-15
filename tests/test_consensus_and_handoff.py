@@ -1154,8 +1154,11 @@ def test_session_memory_injects_prior_turn_snippets_and_import_clears_stale_pass
         post_import = auditor.export_session_memory(session_id)
         assert "pass_session_ids" in post_import.metadata
         assert post_import.metadata["pass_session_ids"] == []
-        saved_file_bundle = load_bundle(auditor._session_bundle_path(session_id))
-        assert saved_file_bundle.metadata.get("pass_session_ids") == []
+
+    # Verify cleared pass_session_ids also persists across a fresh auditor runtime restart
+    with _make_auditor(tmp_path, loopback_server, name="auditor_c5") as reloaded_auditor:
+        reloaded_bundle = reloaded_auditor.export_session_memory(session_id)
+        assert reloaded_bundle.metadata.get("pass_session_ids") == []
 
         # Next audit sees imported bundle item but NOT stale session_msgs from cleared pass_session_ids
         loopback_server.enqueue(
@@ -1185,7 +1188,7 @@ def test_session_memory_injects_prior_turn_snippets_and_import_clears_stale_pass
             )
         )
         turn3_start = len(loopback_server.requests)
-        auditor.audit_claim(dossier_3, single_pass=False, session_id=session_id)
+        reloaded_auditor.audit_claim(dossier_3, single_pass=False, session_id=session_id)
         turn3_reqs = loopback_server.requests[turn3_start:]
         turn3_user_blob = " ".join(
             str(m.get("content", ""))

@@ -260,11 +260,20 @@ def _wrap_text(
     if max_lines is not None and len(lines) > max_lines:
         lines = lines[:max_lines]
         if lines[-1]:
-            base = lines[-1].rstrip(".")
-            while base and draw.textlength(base + "...", font=font) > max_width:
-                base = base[:-1].rstrip()
-            lines[-1] = (base + "...") if base else "..."
+            lines[-1] = _truncate_line(draw, lines[-1].rstrip("."), font, max_width)
     return lines
+
+
+def _truncate_line(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont | ImageFont.FreeTypeFont,
+    max_width: int,
+) -> str:
+    base = text.rstrip()
+    while base and draw.textlength(base + "...", font=font) > max_width:
+        base = base[:-1].rstrip()
+    return (base + "...") if base else "..."
 
 
 def _fit_single_line(
@@ -276,10 +285,7 @@ def _fit_single_line(
     clean = " ".join(str(text or "").split())
     if not clean or draw.textlength(clean, font=font) <= max_width:
         return clean
-    base = clean
-    while base and draw.textlength(base + "...", font=font) > max_width:
-        base = base[:-1].rstrip()
-    return (base + "...") if base else "..."
+    return _truncate_line(draw, clean, font, max_width)
 
 
 def _fit_caption_lines(
@@ -491,7 +497,7 @@ def _build_scene_terminal_lines(
         hints = ", ".join(str(h) for h in (dossier.get("source_hints") or ["sec-spot-btc-2024-01-10"]))
         tools_str = ", ".join(tool_calls) or "load_delphi_market_fixture, search_public_evidence, fetch_source_excerpt"
         return [
-            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --dossier fixtures/claim_dossiers.json --preset {preset}"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --fixtures fixtures/claim_dossiers.json --preset {preset} --multi-pass"),
             ("info", f"[dossier] loaded claim_id={claim_id} | hints=[{hints}]"),
             ("highlight", f"[policy-guard] assert_read_only_tools(): min_scope='READ_ONLY' enforced across {max(len(tool_calls), 3)} tool(s)"),
             ("info", f"[tool-exec] invoked: {tools_str}"),
@@ -504,7 +510,7 @@ def _build_scene_terminal_lines(
         t0 = dict(per_pass.get("corroborator") or {})
         t1 = dict(per_pass.get("skeptic") or {})
         return [
-            ("cmd", f"$ cortensor-verifier subagent-audit --claim-id {claim_id} --roles corroborator,skeptic --blind"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --preset {preset} --model {audit_model} --multi-pass --session-id {session_id}"),
             ("info", "[isolation] SubagentRunContext: parent_transcript_inherited=False memory_posture='none' tools=READ_ONLY"),
             ("highlight", f"[pass:corroborator] verdict={p0.get('verdict')} conf={float(p0.get('confidence', 0.96)):.2f} reqs={t0.get('requests', 0)} latency={t0.get('latency_ms', 0)}ms"),
             ("highlight", f"[pass:skeptic]      verdict={p1.get('verdict')} conf={float(p1.get('confidence', 0.92)):.2f} reqs={t1.get('requests', 0)} latency={t1.get('latency_ms', 0)}ms"),
@@ -513,7 +519,7 @@ def _build_scene_terminal_lines(
 
     if scene_idx == 3:
         return [
-            ("cmd", f"$ cortensor-verifier synthesize --claim-id {claim_id} --session-id {session_id} --export-memory mem.json"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --preset {preset} --multi-pass --session-id {session_id} --memory-bundle-out mem.json"),
             ("highlight", f"[consensus] verdict={consensus.get('final_verdict', 'SUPPORTED')} agreement={float(consensus.get('agreement_score', 0.98)):.2f} mean_conf={float(consensus.get('mean_confidence', 0.94)):.2f}"),
             ("info", f"[telemetry] requests={telemetry.get('requests', 0)} prompt_tok={telemetry.get('prompt_tokens', 0)} completion_tok={telemetry.get('completion_tokens', 0)} total_ms={telemetry.get('total_latency_ms', 0)}"),
             ("info", f"[memory] export_bundle(session='{session_id}') -> save_bundle() -> import_bundle() | cross_session_guard=ON"),

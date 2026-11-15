@@ -317,7 +317,7 @@
         "probe_id": "memory_bundle_portability",
         "name": "MemoryBundle Export, Save, Load & Import",
         "passed": true,
-        "detail": "Roundtripped MemoryBundle vmemory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).",
+        "detail": "Roundtripped MemoryBundle memory_bundle.v1 (1 item) via export_bundle -> save_bundle -> load_bundle -> import_bundle(direct/candidate).",
         "latency_ms": 1.99,
         "metadata": {
           "bundle_version": "memory_bundle.v1",
