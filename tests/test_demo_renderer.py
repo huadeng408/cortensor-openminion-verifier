@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,11 @@ from cortensor_verifier.demo_renderer import (
     DEMO_HEIGHT,
     DEMO_WIDTH,
     TOTAL_SCENES,
+    _SCENE_CAPTIONS,
+    _SCENE_TITLES,
+    _build_scene_terminal_lines,
+    _load_font,
+    load_demo_inputs,
     render_demo_video,
 )
 from cortensor_verifier.probe import EXPECTED_PROBE_IDS
@@ -359,4 +365,273 @@ def test_demo_renderer_animates_live_terminal_execution_within_scene(tmp_path: P
         # Verify footer progress timer aligns cleanly within right margin x <= DEMO_WIDTH - 50.
         footer_right = frames[late_idx][1012:, DEMO_WIDTH - 50 :, :]
         assert footer_right.max() < 60, f"{label} footer timer overflowed right margin x={DEMO_WIDTH - 50}."
+
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
+
+
+def test_demo_renderer_english_only_no_cjk_and_no_private_footer() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    renderer_src = (repo_root / "src" / "cortensor_verifier" / "demo_renderer.py").read_text(
+        encoding="utf-8"
+    )
+    assert not _CJK_RE.search(renderer_src), "demo_renderer.py must contain zero CJK characters."
+    assert "PRIVATE" not in renderer_src, "demo_renderer.py must not retain private repo footer warning."
+    assert "MIT Licensed · Zero Plaintext Secrets · Offline & Live Reproducible" in renderer_src
+
+    assert len(_SCENE_TITLES) == TOTAL_SCENES
+    assert len(_SCENE_CAPTIONS) == TOTAL_SCENES
+    for title, subtitle in _SCENE_TITLES:
+        assert not _CJK_RE.search(title)
+        assert not _CJK_RE.search(subtitle)
+        assert subtitle.startswith("Scene ")
+    for caption in _SCENE_CAPTIONS:
+        assert not _CJK_RE.search(caption)
+
+    cjk_font_markers = ("msyh", "simhei", "notosanscjk", "notoserifcjk", "wqy", "pingfang", "stheiti")
+    for bold, mono in ((False, False), (True, False), (False, True), (True, True)):
+        font = _load_font(20, bold=bold, mono=mono)
+        font_path = str(getattr(font, "path", "")).lower()
+        assert not any(marker in font_path for marker in cjk_font_markers), (
+            f"_load_font(bold={bold}, mono={mono}) picked CJK font {font_path!r}"
+        )
+
+
+def test_demo_renderer_per_scene_model_badges_and_scene7_cli_flags() -> None:
+    from cortensor_verifier import demo_renderer
+
+    sample_diff = _sample_payload()
+    sample_diff["audit_bundle"]["metadata"]["calibrated_model"] = "grok-4.6"
+    sample_diff["probe_report"]["model"] = "grok-4.7"
+
+    sample_same = _sample_payload()
+    sample_same["audit_bundle"]["metadata"]["calibrated_model"] = "grok-4.7"
+    sample_same["probe_report"]["model"] = "grok-4.7"
+
+    fonts = demo_renderer._create_fonts()
+
+    # Scenes 0..4 must render audit_model (grok-4.6), distinct from probe_model (grok-4.7)
+    for scene_idx in range(5):
+        img_audit_46 = np.asarray(
+            demo_renderer._render_scene_canvas(
+                scene_idx,
+                fonts=fonts,
+                audit=sample_diff["audit_bundle"],
+                probe=sample_diff["probe_report"],
+            )
+        )
+        img_audit_47 = np.asarray(
+            demo_renderer._render_scene_canvas(
+                scene_idx,
+                fonts=fonts,
+                audit=sample_same["audit_bundle"],
+                probe=sample_same["probe_report"],
+            )
+        )
+        header_badge_diff = int(
+            np.sum(np.abs(img_audit_46[80:130, 1200:1880, :].astype(np.int16) - img_audit_47[80:130, 1200:1880, :].astype(np.int16)).max(axis=2) > 20)
+        )
+        assert header_badge_diff > 20, (
+            f"Scene {scene_idx + 1} header model badge did not reflect calibrated_model='grok-4.6' vs 'grok-4.7'"
+        )
+
+    # Scene 5 (Scene 6) uses probe_model (grok-4.7) regardless of audit_model (grok-4.6 vs grok-4.7)
+    img_s6_diff = np.asarray(
+        demo_renderer._render_scene_canvas(
+            5,
+            fonts=fonts,
+            audit=sample_diff["audit_bundle"],
+            probe=sample_diff["probe_report"],
+        )
+    )
+    img_s6_same = np.asarray(
+        demo_renderer._render_scene_canvas(
+            5,
+            fonts=fonts,
+            audit=sample_same["audit_bundle"],
+            probe=sample_same["probe_report"],
+        )
+    )
+    s6_header_diff = int(
+        np.sum(np.abs(img_s6_diff[80:130, 1200:1880, :].astype(np.int16) - img_s6_same[80:130, 1200:1880, :].astype(np.int16)).max(axis=2) > 20)
+    )
+    assert s6_header_diff == 0, "Scene 6 header model badge must depend only on probe_report.model."
+
+    # Scene 6 (Scene 7) header shows combined 'grok-4.6 / grok-4.7', and CLI command #2 reflects calibrated_model
+    img_s7_diff = np.asarray(
+        demo_renderer._render_scene_canvas(
+            6,
+            fonts=fonts,
+            audit=sample_diff["audit_bundle"],
+            probe=sample_diff["probe_report"],
+        )
+    )
+    img_s7_same = np.asarray(
+        demo_renderer._render_scene_canvas(
+            6,
+            fonts=fonts,
+            audit=sample_same["audit_bundle"],
+            probe=sample_same["probe_report"],
+        )
+    )
+    s7_header_diff = int(
+        np.sum(np.abs(img_s7_diff[80:130, 1200:1880, :].astype(np.int16) - img_s7_same[80:130, 1200:1880, :].astype(np.int16)).max(axis=2) > 20)
+    )
+    assert s7_header_diff > 50, "Scene 7 header badge must display 'grok-4.6 / grok-4.7' when models differ."
+
+    s7_cmd_diff = int(
+        np.sum(np.abs(img_s7_diff[340:540, 1160:1850, :].astype(np.int16) - img_s7_same[340:540, 1160:1850, :].astype(np.int16)).max(axis=2) > 20)
+    )
+    assert s7_cmd_diff > 20, "Scene 7 right-card audit CLI command #2 must explicitly display --model <audit_model>."
+
+    assert hasattr(demo_renderer, "_scene_model_label")
+    for idx in range(5):
+        assert demo_renderer._scene_model_label(
+            idx, audit=sample_diff["audit_bundle"], probe=sample_diff["probe_report"]
+        ) == "grok-4.6"
+    assert demo_renderer._scene_model_label(
+        5, audit=sample_diff["audit_bundle"], probe=sample_diff["probe_report"]
+    ) == "grok-4.7"
+    assert demo_renderer._scene_model_label(
+        6, audit=sample_diff["audit_bundle"], probe=sample_diff["probe_report"]
+    ) == "grok-4.6 / grok-4.7"
+    assert demo_renderer._scene_model_label(
+        6, audit=sample_same["audit_bundle"], probe=sample_same["probe_report"]
+    ) == "grok-4.7"
+
+
+def test_build_scene_terminal_lines_embeds_authentic_json_and_turnchunk_telemetry() -> None:
+    from PIL import Image, ImageDraw
+    from cortensor_verifier.demo_renderer import _create_fonts
+    from cortensor_verifier.probe import assert_no_plaintext_secrets
+
+    audit, probe = load_demo_inputs()
+    fonts = _create_fonts()
+    draw = ImageDraw.Draw(Image.new("RGB", (DEMO_WIDTH, DEMO_HEIGHT)))
+
+    per_scene_text: list[str] = []
+    for scene_idx in range(TOTAL_SCENES):
+        lines = _build_scene_terminal_lines(scene_idx, audit=audit, probe=probe)
+        assert len(lines) == 5, f"Scene {scene_idx + 1} terminal must have 5 concise lines."
+        joined = "\n".join(line for _, line in lines)
+        assert not _CJK_RE.search(joined)
+        assert_no_plaintext_secrets(joined)
+        for _, raw_line in lines:
+            assert draw.textlength(raw_line, font=fonts.mono_sm) <= DEMO_WIDTH - 160, (
+                f"Scene {scene_idx + 1} terminal line overflows 1760px: {raw_line!r}"
+            )
+        per_scene_text.append(joined)
+
+    # Scenes 0..4 target calibrated audit_model (grok-4.6); Scene 5 targets probe_model (grok-4.7)
+    for scene_idx in range(5):
+        assert "--model grok-4.6" in per_scene_text[scene_idx], (
+            f"Scene {scene_idx + 1} CLI command must specify --model grok-4.6"
+        )
+    assert "--model grok-4.7" in per_scene_text[5]
+
+    all_text = "\n".join(per_scene_text)
+    for expected_token in (
+        '"claim_id": "delphi-btc-etf-2024"',
+        '"final_verdict": "SUPPORTED"',
+        '"agreement_score": 0.98',
+        '"publication_status": "published"',
+        '"passed_probes": 10',
+        '"total_tokens": 118193',
+        '"requests": 20',
+        "TurnChunk",
+        "11841",
+        "430",
+    ):
+        assert expected_token in all_text, f"Missing authentic telemetry/JSON key: {expected_token!r}"
+
+    # Per-pass telemetry in Scene 3 (scene_idx=2)
+    assert "requests=8" in per_scene_text[2] and "total_tokens=52518" in per_scene_text[2]
+    assert "requests=7" in per_scene_text[2] and "total_tokens=45617" in per_scene_text[2]
+
+
+_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+
+
+def test_submission_docs_and_readme_links_license_and_metadata() -> None:
+    from cortensor_verifier.probe import assert_no_plaintext_secrets
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pr_draft_path = repo_root / "docs" / "PR_SUBMISSION_DRAFT.md"
+    readme_path = repo_root / "README.md"
+
+    pr_text = pr_draft_path.read_text(encoding="utf-8")
+    readme_text = readme_path.read_text(encoding="utf-8")
+
+    assert_no_plaintext_secrets(pr_text)
+    assert_no_plaintext_secrets(readme_text)
+
+    # Zero broken relative links or ./ or ../ paths in PR_SUBMISSION_DRAFT.md
+    pr_links = _MARKDOWN_LINK_RE.findall(pr_text)
+    assert pr_links, "docs/PR_SUBMISSION_DRAFT.md must contain explicit GitHub documentation links."
+    for target in pr_links:
+        assert not target.startswith("./") and not target.startswith("../"), (
+            f"PR_SUBMISSION_DRAFT.md contains relative ./ or ../ link: {target!r}"
+        )
+        assert target.startswith("https://"), (
+            f"PR_SUBMISSION_DRAFT.md links inside submission templates must be explicit full HTTPS URLs, got: {target!r}"
+        )
+    assert "https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/" in pr_text
+
+    # Every relative link in README.md must avoid ./ or ../ and resolve to an existing file in REPO_ROOT
+    for target in _MARKDOWN_LINK_RE.findall(readme_text):
+        assert not target.startswith("./") and not target.startswith("../"), (
+            f"README.md contains broken relative prefix in link: {target!r}"
+        )
+        if target.startswith(("http://", "https://", "#")):
+            continue
+        clean_rel = target.split("#", 1)[0]
+        assert (repo_root / clean_rel).exists(), (
+            f"README.md link target does not exist in repo root: {target!r}"
+        )
+
+    # Shared required references in both README.md and docs/PR_SUBMISSION_DRAFT.md
+    for name, text in (("README.md", readme_text), ("docs/PR_SUBMISSION_DRAFT.md", pr_text)):
+        for required in (
+            "MIT",
+            "openminion==0.1.21",
+            "PROJECTS.yml",
+            "STATUS.md",
+            "RELEASE.md",
+            "UPSTREAM_OPENMINION_BONUS_DRAFTS.md",
+            "cortensor_hackathon5_demo.mp4",
+        ):
+            assert required in text, f"{name} must reference {required!r}"
+        assert "Apache-2.0" not in text, f"{name} must not advertise superseded Apache-2.0 license."
+
+    # README.md specific technical coverage
+    for readme_req in (
+        "load_delphi_market_fixture",
+        "search_public_evidence",
+        "fetch_source_excerpt",
+        "fetch_public_url_excerpt",
+        "--fixtures",
+        "evidence_sources",
+        "English",
+        "render-demo",
+    ):
+        assert readme_req in readme_text, f"README.md missing required technical detail: {readme_req!r}"
+
+    # PR_SUBMISSION_DRAFT.md dual-channel templates & operator checklist
+    for pr_req in (
+        "DoraHacks",
+        "#2418",
+        "cortensor/community-projects",
+        "apps/cortensor-openminion-verifier/",
+        "dev-huadeng408",
+        "openminion/openminion",
+        "Discord",
+        "Public",
+        "grok-4.6",
+        "grok-4.7",
+    ):
+        assert pr_req in pr_text, f"docs/PR_SUBMISSION_DRAFT.md missing required checklist/template item: {pr_req!r}"
+
+
+
+
 
