@@ -221,7 +221,50 @@ def test_fetch_public_url_excerpt_blocks_ssrf_and_extracts_html_when_allowed(
         assert redir_blocked.get("error")
         assert redirect_targets_visited == ["https://public.example.test/start"]
 
-        # Restore real httpx.Client & getaddrinfo to verify allow_private_network=True HTML reading
+        # Restore real httpx.Client & test DNS-rebinding TOCTOU pinning at TCP dial time
+        monkeypatch.undo()
+        from cortensor_verifier.tools import _SSRFBlockingNetworkBackend
+        import httpcore
+
+        rebind_calls = {"count": 0}
+        dialed_hosts: list[str] = []
+
+        def _rebinding_getaddrinfo(
+            host: Any,
+            port_arg: Any,
+            family: int = 0,
+            type: int = 0,  # noqa: A002
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[Any]:
+            if host == "toctou.example.test":
+                rebind_calls["count"] += 1
+                resolved_ip = "93.184.216.34" if rebind_calls["count"] == 1 else "169.254.169.254"
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (resolved_ip, int(port_arg or 443)))]
+            if host == "public.example.test":
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", int(port_arg or 443)))]
+            return real_getaddrinfo(host, port_arg, family, type, proto, flags)
+
+        monkeypatch.setattr(socket, "getaddrinfo", _rebinding_getaddrinfo)
+        monkeypatch.setattr(
+            httpcore.SyncBackend,
+            "connect_tcp",
+            lambda self, host, port, timeout=None, local_address=None, socket_options=None: (
+                dialed_hosts.append(str(host)) or "DUMMY_STREAM"
+            ),
+        )
+        backend = _SSRFBlockingNetworkBackend(allow_private_network=False)
+        # Normal public host must pin & dial the literal resolved IP (never pass hostname downstream)
+        assert backend.connect_tcp("public.example.test", 443) == "DUMMY_STREAM"
+        assert dialed_hosts == ["93.184.216.34"]
+        # First lookup returns public IP; second lookup right at TCP dial time rebinds -> MUST block!
+        from cortensor_verifier.tools import _validate_public_url
+
+        _validate_public_url("https://toctou.example.test/doc", allow_private_network=False)
+        with pytest.raises(ValueError, match="non-public"):
+            backend.connect_tcp("toctou.example.test", 443)
+
+        # Restore real getaddrinfo/SyncBackend to verify allow_private_network=True HTML reading
         monkeypatch.undo()
         scoped_tools = build_scoped_verifier_tools(allow_private_network=True)
         by_name = {fn.tool_decl.name: fn for fn in scoped_tools}

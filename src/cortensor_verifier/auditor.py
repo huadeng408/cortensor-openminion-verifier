@@ -1137,6 +1137,35 @@ class ConsensusAuditor:
             coord_res,
         )
 
+    def _build_audit_bundle(
+        self,
+        *,
+        dossier: ClaimDossier,
+        consensus: ConsensusVerdict,
+        tool_calls: list[str],
+        telemetry: TelemetrySummary,
+        session_id: str | None,
+        run_id: str | None = None,
+        publication: PublicationResult | None = None,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> AuditRunBundle:
+        metadata: dict[str, Any] = dict(extra_metadata or {})
+        metadata["telemetry"] = telemetry.model_dump(mode="json")
+        metadata.update(self._calibration_metadata())
+        if publication is not None:
+            metadata["publication"] = publication.model_dump(mode="json")
+        return AuditRunBundle(
+            claim_id=dossier.claim_id,
+            preset=self.preset,
+            dossier=dossier,
+            consensus=consensus,
+            tool_calls=tool_calls,
+            run_id=run_id,
+            session_id=session_id,
+            publication=publication,
+            metadata=metadata,
+        )
+
     def resume_publication(
         self,
         *,
@@ -1181,20 +1210,13 @@ class ConsensusAuditor:
                 ),
                 log_path=str(log_path),
             )
-            return AuditRunBundle(
-                claim_id=dossier.claim_id,
-                preset=self.preset,
+            return self._build_audit_bundle(
                 dossier=dossier,
                 consensus=consensus,
                 tool_calls=prior_tool_calls,
-                run_id=None,
+                telemetry=prior_telemetry,
                 session_id=session_id,
                 publication=pub_res,
-                metadata={
-                    "telemetry": prior_telemetry.model_dump(mode="json"),
-                    "publication": pub_res.model_dump(mode="json"),
-                    **self._calibration_metadata(),
-                },
             )
 
         if approval_mode == "pause":
@@ -1209,19 +1231,13 @@ class ConsensusAuditor:
                 approval_id=snap_approval_id,
                 log_path=str(log_path),
             )
-            return AuditRunBundle(
-                claim_id=dossier.claim_id,
-                preset=self.preset,
+            return self._build_audit_bundle(
                 dossier=dossier,
                 consensus=consensus,
                 tool_calls=prior_tool_calls,
+                telemetry=prior_telemetry,
                 session_id=session_id,
                 publication=pub_res,
-                metadata={
-                    "telemetry": prior_telemetry.model_dump(mode="json"),
-                    "publication": pub_res.model_dump(mode="json"),
-                    **self._calibration_metadata(),
-                },
             )
 
         coord = self._build_handoff_coordinator(log_path=log_path)
@@ -1261,21 +1277,17 @@ class ConsensusAuditor:
                 [("publication", res_run)],
                 base_summary=prior_telemetry,
             )
-            return AuditRunBundle(
-                claim_id=dossier.claim_id,
-                preset=self.preset,
+            return self._build_audit_bundle(
                 dossier=dossier,
                 consensus=consensus,
                 tool_calls=prior_tool_calls,
-                run_id=res_run.run_id,
+                telemetry=agg_tel,
                 session_id=session_id,
+                run_id=res_run.run_id,
                 publication=pub_res,
-                metadata={
+                extra_metadata={
                     "run_state": res_run.run_state,
                     "stats": res_run.stats,
-                    "telemetry": agg_tel.model_dump(mode="json"),
-                    "publication": pub_res.model_dump(mode="json"),
-                    **self._calibration_metadata(),
                 },
             )
 
@@ -1295,19 +1307,13 @@ class ConsensusAuditor:
                 denial_reason=f"Policy denied replay: authorization '{replay_key}' already consumed.",
                 log_path=str(log_path),
             )
-            return AuditRunBundle(
-                claim_id=dossier.claim_id,
-                preset=self.preset,
+            return self._build_audit_bundle(
                 dossier=dossier,
                 consensus=consensus,
                 tool_calls=prior_tool_calls,
+                telemetry=prior_telemetry,
                 session_id=session_id,
                 publication=pub_res,
-                metadata={
-                    "telemetry": prior_telemetry.model_dump(mode="json"),
-                    "publication": pub_res.model_dump(mode="json"),
-                    **self._calibration_metadata(),
-                },
             )
 
         self._mark_approval_used(replay_key)
@@ -1357,21 +1363,17 @@ class ConsensusAuditor:
             [("publication", res_run)],
             base_summary=prior_telemetry,
         )
-        return AuditRunBundle(
-            claim_id=dossier.claim_id,
-            preset=self.preset,
+        return self._build_audit_bundle(
             dossier=dossier,
             consensus=consensus,
             tool_calls=prior_tool_calls,
-            run_id=res_run.run_id,
+            telemetry=agg_tel,
             session_id=session_id,
+            run_id=res_run.run_id,
             publication=pub_res,
-            metadata={
+            extra_metadata={
                 "run_state": res_run.run_state,
                 "stats": res_run.stats,
-                "telemetry": agg_tel.model_dump(mode="json"),
-                "publication": pub_res.model_dump(mode="json"),
-                **self._calibration_metadata(),
             },
         )
 
@@ -1488,31 +1490,26 @@ class ConsensusAuditor:
                 telemetry_runs.append(("publication", pub_run))
                 telemetry = _aggregate_telemetry(telemetry_runs)
 
-        metadata: dict[str, Any] = {
+        extra_metadata: dict[str, Any] = {
             "run_state": primary_run.run_state,
             "stats": primary_run.stats,
-            "telemetry": telemetry.model_dump(mode="json"),
             "per_pass_stats": {
                 role: dict(res.stats or {}) for role, res in telemetry_runs
             },
-            **self._calibration_metadata(),
         }
         if saved_bundle is not None:
-            metadata["session_memory"] = {
+            extra_metadata["session_memory"] = {
                 "session_id": session_id,
                 "item_count": len(saved_bundle.items),
             }
-        if publication is not None:
-            metadata["publication"] = publication.model_dump(mode="json")
 
-        return AuditRunBundle(
-            claim_id=dossier.claim_id,
-            preset=self.preset,
+        return self._build_audit_bundle(
             dossier=dossier,
             consensus=consensus,
             tool_calls=tool_calls,
-            run_id=primary_run.run_id,
+            telemetry=telemetry,
             session_id=session_id if session_id is not None else primary_run.session_id,
+            run_id=primary_run.run_id,
             publication=publication,
-            metadata=metadata,
+            extra_metadata=extra_metadata,
         )

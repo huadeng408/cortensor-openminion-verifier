@@ -302,15 +302,6 @@ def _fit_caption_lines(
         return []
     if draw.textlength(clean, font=font) <= max_width:
         return [clean]
-    if " | " in clean and max_lines >= 2:
-        first_part, second_part = (part.strip() for part in clean.split(" | ", 1))
-        if (
-            first_part
-            and second_part
-            and draw.textlength(first_part, font=font) <= max_width
-            and draw.textlength(second_part, font=font) <= max_width
-        ):
-            return [first_part, second_part]
     return _wrap_text(draw, clean, font, max_width=max_width, max_lines=max_lines)
 
 

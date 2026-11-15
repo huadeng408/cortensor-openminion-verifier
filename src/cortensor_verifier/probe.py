@@ -1773,6 +1773,14 @@ def _render_what_worked_cleanly_lines(report: ProbeSuiteReport) -> list[str]:
     return lines
 
 
+def _passed_probe_metadata(
+    passed: dict[str, ProbeCheckResult],
+    probe_id: str,
+) -> dict[str, Any]:
+    item = passed.get(probe_id)
+    return item.metadata if item is not None and isinstance(item.metadata, dict) else {}
+
+
 def _render_rough_edges_lines(report: ProbeSuiteReport) -> list[str]:
     """Render verified SDK rough edges and any failed probes observed during calibration."""
     passed = {item.probe_id: item for item in report.probes if item.passed}
@@ -1780,228 +1788,262 @@ def _render_rough_edges_lines(report: ProbeSuiteReport) -> list[str]:
     lines = ["## What Broke & Rough Edges Encountered", ""]
 
     for item in failed:
+        lines.append(f"- **Probe failure (`{item.probe_id}`)**: {item.detail}")
+
+    if "session_continuity" in passed:
+        sess_meta = _passed_probe_metadata(passed, "session_continuity")
+        sess_note = (
+            f" (verified with `thread_id={sess_meta['thread_id']}`)"
+            if "thread_id" in sess_meta
+            else ""
+        )
         lines.append(
-            f"- **Probe failure (`{item.probe_id}`)**: {item.detail}"
+            "- **Implicit new thread per `Agent.run(session_id=...)` without explicit `thread_id`**: "
+            "`Agent._build_payload()` (`openminion/api/agent.py:167-170`) omits `inbound_metadata['thread_id']` "
+            "unless `thread_id` is passed explicitly, so `resolve_thread_routing_decision()` "
+            "(`openminion/modules/task/run/status.py:532-539`) treats subsequent turns on a settled "
+            "session as `settled_without_resume` and forks a fresh `thread_id`"
+            f"{sess_note}."
         )
 
-    sess_meta = passed["session_continuity"].metadata if "session_continuity" in passed else {}
-    sess_note = (
-        f" (verified with `thread_id={sess_meta['thread_id']}`)"
-        if "thread_id" in sess_meta
-        else ""
-    )
-    lines.append(
-        "- **Implicit new thread per `Agent.run(session_id=...)` without explicit `thread_id`**: "
-        "`Agent._build_payload()` (`openminion/api/agent.py:167-170`) omits `inbound_metadata['thread_id']` "
-        "unless `thread_id` is passed explicitly, so `resolve_thread_routing_decision()` "
-        "(`openminion/modules/task/run/status.py:532-539`) treats subsequent turns on a settled "
-        "session as `settled_without_resume` and forks a fresh `thread_id`"
-        f"{sess_note}."
-    )
-
-    stream_meta = (
-        passed["submit_turn_streaming_telemetry"].metadata
-        if "submit_turn_streaming_telemetry" in passed
-        else {}
-    )
-    if (
-        "tokens_in" in stream_meta
-        and "tokens_out" in stream_meta
-        and "stats_input_tokens" in stream_meta
-        and "stats_output_tokens" in stream_meta
-    ):
-        stream_observed = (
-            f" (`tokens_in={stream_meta['tokens_in']}`, `tokens_out={stream_meta['tokens_out']}` vs "
-            f"`TurnResponse.stats` `input_tokens={stream_meta['stats_input_tokens']}`, "
-            f"`output_tokens={stream_meta['stats_output_tokens']}`, "
-            f"`telemetry_metadata_mismatch={stream_meta.get('telemetry_metadata_mismatch')}`)"
-        )
-    else:
-        stream_observed = ""
-    lines.append(
-        "- **`TurnTelemetry` token-zero mismatch vs `TurnResponse.stats`**: "
-        "`_turn_success_response()` (`openminion/services/runtime/daemon.py:549-555`) populates "
-        "`TurnTelemetry.tokens_in/tokens_out` from `metadata.get('usage_prompt_tokens')` and "
-        "`metadata.get('usage_completion_tokens')`, whereas brain post-execution writes "
-        "`total_input_tokens_used` / `total_output_tokens_used` and `turn_result.stats`"
-        f"{stream_observed}."
-    )
-
-    handoff_meta = passed["agent_handoff"].metadata if "agent_handoff" in passed else {}
-    handoff_note = (
-        f" (`verbatim_ack={handoff_meta['verbatim_ack']}` in live calibration as coordinators "
-        "paraphrase specialist text)"
-        if "verbatim_ack" in handoff_meta
-        else ""
-    )
-    lines.append(
-        "- **`handoff.target.run(message)` timeout & approval omission**: "
-        "`build_delegate_tool()` (`openminion/api/handoff.py:168-170`) invokes "
-        "`handoff.target.run(message)` without forwarding caller `timeout_seconds` (falling back "
-        "to the `90.0s` default in `openminion/base/config/runtime/__init__.py:73`) or "
-        "`approval_callback`, forcing target runtimes to rely on pre-issued `PolicyGrantInput(max_uses=1)`"
-        f"{handoff_note}."
-    )
-
-    err_meta = (
-        passed["error_and_timeout_contracts"].metadata
-        if "error_and_timeout_contracts" in passed
-        else {}
-    )
-    wire = err_meta.get("provider_wire_formats") if isinstance(err_meta.get("provider_wire_formats"), dict) else {}
-    if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
-        sse_note = (
-            f" (`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
-            f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)"
-        )
-    else:
-        sse_note = ""
-    lines.append(
-        "- **SSE `usage` chunk suppression without `service_vendor='openai'`**: "
-        "`OpenAIProvider.stream()` (`openminion/modules/llm/providers/openai/adapter.py:901-907, 961`) "
-        "sets `preserve_response_facts=False` unless `service_vendor == 'openai'` or a compat "
-        "dialect overrides it, causing `_iter_openai_stream_events()` (`adapter.py:505-524`) to "
-        "skip final `usage`, `finish_reason`, and tool-call deltas for OpenAI-compatible relays"
-        f"{sse_note}."
-    )
-
-    sub_meta = passed["subagent_delegation"].metadata if "subagent_delegation" in passed else {}
-    sub_note = (
-        f" (isolated `context_id={sub_meta['context_id']}`)"
-        if "context_id" in sub_meta
-        else ""
-    )
-    lines.append(
-        "- **Sequential `subagent()` `task_update` state collision & `90.0s` timeout fallback**: "
-        "`resolve_entry_task_update()` (`openminion/modules/brain/loop/context/task_context.py:173-191`) "
-        "raises `ValueError('Missing task_update for a clarification or active request')` or "
-        "`ValueError('Exactly one task_update is allowed per entry response')` when sequential "
-        "subagent passes share session task state or emit batched entry tool calls, while omitting "
-        "explicit `timeout_seconds` falls back to the `90.0s` runtime default (`services/runtime/daemon.py:307`)"
-        f"{sub_note}."
-    )
-
-    if "http_500_attempts" in err_meta:
+    if "submit_turn_streaming_telemetry" in passed:
+        stream_meta = _passed_probe_metadata(passed, "submit_turn_streaming_telemetry")
+        if (
+            "tokens_in" in stream_meta
+            and "tokens_out" in stream_meta
+            and "stats_input_tokens" in stream_meta
+            and "stats_output_tokens" in stream_meta
+        ):
+            stream_observed = (
+                f" (`tokens_in={stream_meta['tokens_in']}`, `tokens_out={stream_meta['tokens_out']}` vs "
+                f"`TurnResponse.stats` `input_tokens={stream_meta['stats_input_tokens']}`, "
+                f"`output_tokens={stream_meta['stats_output_tokens']}`, "
+                f"`telemetry_metadata_mismatch={stream_meta.get('telemetry_metadata_mismatch')}`)"
+            )
+        else:
+            stream_observed = _format_present_meta(
+                stream_meta,
+                ("chunk_count", "duration_ms", "retries"),
+            )
         lines.append(
-            "- **Layered HTTP 500 retry multiplication & Windows connection reuse**: "
-            f"With `http_connection_reuse_enabled={err_meta.get('http_connection_reuse_enabled')}`, "
-            f"`provider_retry_max_attempts=2` multiplied by transport retries produced "
-            f"`http_500_attempts={err_meta['http_500_attempts']}` before raising `ProviderError`."
+            "- **`TurnTelemetry` token-zero mismatch vs `TurnResponse.stats`**: "
+            "`_turn_success_response()` (`openminion/services/runtime/daemon.py:549-555`) populates "
+            "`TurnTelemetry.tokens_in/tokens_out` from `metadata.get('usage_prompt_tokens')` and "
+            "`metadata.get('usage_completion_tokens')`, whereas brain post-execution writes "
+            "`total_input_tokens_used` / `total_output_tokens_used` and `turn_result.stats`"
+            f"{stream_observed}."
         )
 
-    lines.append(
-        "- **Internal `submit_output` classifier turns & `agent_id:` reply prefix**: "
-        "OpenMinion issues internal `FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment` "
-        "(`tool_choice='submit_output'`) turns requiring `action_summary` preservation in gateways/stubs, "
-        "and prefixes replies with `f'{agent_id}: '`, requiring `_extract_json_object()` recovery."
-    )
+    if "agent_handoff" in passed:
+        handoff_meta = _passed_probe_metadata(passed, "agent_handoff")
+        handoff_note = (
+            f" (`verbatim_ack={handoff_meta['verbatim_ack']}` in live calibration as coordinators "
+            "paraphrase specialist text)"
+            if "verbatim_ack" in handoff_meta
+            else ""
+        )
+        lines.append(
+            "- **`handoff.target.run(message)` timeout & approval omission**: "
+            "`build_delegate_tool()` (`openminion/api/handoff.py:168-170`) invokes "
+            "`handoff.target.run(message)` without forwarding caller `timeout_seconds` (falling back "
+            "to the `90.0s` default in `openminion/base/config/runtime/__init__.py:73`) or "
+            "`approval_callback`, forcing target runtimes to rely on pre-issued `PolicyGrantInput(max_uses=1)`"
+            f"{handoff_note}."
+        )
+
+    if "error_and_timeout_contracts" in passed:
+        err_meta = _passed_probe_metadata(passed, "error_and_timeout_contracts")
+        wire = (
+            err_meta.get("provider_wire_formats")
+            if isinstance(err_meta.get("provider_wire_formats"), dict)
+            else {}
+        )
+        if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
+            sse_note = (
+                f" (`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
+                f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)"
+            )
+        else:
+            sse_note = ""
+        lines.append(
+            "- **SSE `usage` chunk suppression without `service_vendor='openai'`**: "
+            "`OpenAIProvider.stream()` (`openminion/modules/llm/providers/openai/adapter.py:901-907, 961`) "
+            "sets `preserve_response_facts=False` unless `service_vendor == 'openai'` or a compat "
+            "dialect overrides it, causing `_iter_openai_stream_events()` (`adapter.py:505-524`) to "
+            "skip final `usage`, `finish_reason`, and tool-call deltas for OpenAI-compatible relays"
+            f"{sse_note}."
+        )
+        if "http_500_attempts" in err_meta:
+            lines.append(
+                "- **Layered HTTP 500 retry multiplication & Windows connection reuse**: "
+                f"With `http_connection_reuse_enabled={err_meta.get('http_connection_reuse_enabled')}`, "
+                "`provider_retry_max_attempts=2` multiplied by transport retries produced "
+                f"`http_500_attempts={err_meta['http_500_attempts']}` before raising `ProviderError`."
+            )
+
+    if "subagent_delegation" in passed:
+        sub_meta = _passed_probe_metadata(passed, "subagent_delegation")
+        sub_note = (
+            f" (isolated `context_id={sub_meta['context_id']}`)"
+            if "context_id" in sub_meta
+            else ""
+        )
+        lines.append(
+            "- **Sequential `subagent()` `task_update` state collision & `90.0s` timeout fallback**: "
+            "`resolve_entry_task_update()` (`openminion/modules/brain/loop/context/task_context.py:173-191`) "
+            "raises `ValueError('Missing task_update for a clarification or active request')` or "
+            "`ValueError('Exactly one task_update is allowed per entry response')` when sequential "
+            "subagent passes share session task state or emit batched entry tool calls, while omitting "
+            "explicit `timeout_seconds` falls back to the `90.0s` runtime default (`services/runtime/daemon.py:307`)"
+            f"{sub_note}."
+        )
+
+    if {"structured_pydantic_output", "tool_and_forced_tools", "submit_turn_streaming_telemetry"} & set(passed):
+        lines.append(
+            "- **Internal `submit_output` classifier turns & `agent_id:` reply prefix**: "
+            "OpenMinion issues internal `FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment` "
+            "(`tool_choice='submit_output'`) turns requiring `action_summary` preservation in gateways/stubs, "
+            "and prefixes replies with `f'{agent_id}: '`, requiring `_extract_json_object()` recovery."
+        )
+
+    if len(lines) == 2:
+        lines.append(
+            "- No probe failures or matching SDK rough edges were observed for the executed probe subset."
+        )
+
     lines.append("")
     return lines
 
 
 def _render_improvement_proposals_lines(report: ProbeSuiteReport) -> list[str]:
-    """Render structured upstream SDK improvement proposals with Repro and Expected vs. Actual."""
+    """Render structured upstream SDK improvement proposals strictly gated on passing probes."""
     passed = {item.probe_id: item for item in report.probes if item.passed}
-    stream_meta = (
-        passed["submit_turn_streaming_telemetry"].metadata
-        if "submit_turn_streaming_telemetry" in passed
-        else {}
-    )
-    if (
-        "tokens_in" in stream_meta
-        and "tokens_out" in stream_meta
-        and "stats_input_tokens" in stream_meta
-        and "stats_output_tokens" in stream_meta
-    ):
-        telemetry_actual = (
-            f"Expected `TurnTelemetry` to match `TurnResponse.stats`; actual run emitted "
-            f"`TurnTelemetry(tokens_in={stream_meta['tokens_in']}, tokens_out={stream_meta['tokens_out']})` "
-            f"alongside `stats(input_tokens={stream_meta['stats_input_tokens']}, "
-            f"output_tokens={stream_meta['stats_output_tokens']})`."
-        )
-    else:
-        telemetry_actual = (
-            "Expected `TurnTelemetry.tokens_in/tokens_out` to match `TurnResponse.stats` token totals; "
-            "actual `TurnTelemetry` resolves to `(0, 0)` whenever `metadata` lacks `usage_prompt_tokens` / "
-            "`usage_completion_tokens`."
+    proposals: list[tuple[str, str, str, str, str]] = []
+
+    if "submit_turn_streaming_telemetry" in passed:
+        stream_meta = _passed_probe_metadata(passed, "submit_turn_streaming_telemetry")
+        if (
+            "tokens_in" in stream_meta
+            and "tokens_out" in stream_meta
+            and "stats_input_tokens" in stream_meta
+            and "stats_output_tokens" in stream_meta
+        ):
+            telemetry_actual = (
+                f"Expected `TurnTelemetry` to match `TurnResponse.stats`; actual run emitted "
+                f"`TurnTelemetry(tokens_in={stream_meta['tokens_in']}, tokens_out={stream_meta['tokens_out']})` "
+                f"alongside `stats(input_tokens={stream_meta['stats_input_tokens']}, "
+                f"output_tokens={stream_meta['stats_output_tokens']})`."
+            )
+        else:
+            telemetry_actual = (
+                "Expected `TurnTelemetry.tokens_in/tokens_out` to match `TurnResponse.stats` token totals"
+                f"{_format_present_meta(stream_meta, ('chunk_count', 'duration_ms'))}; actual `TurnTelemetry` "
+                "reads `metadata.get('usage_prompt_tokens')` / `usage_completion_tokens`."
+            )
+        proposals.append(
+            (
+                "Populate `TurnTelemetry` Token Counts from `turn_result.stats` / `total_*_tokens_used`",
+                "`openminion/services/runtime/daemon.py:549-555` (`_turn_success_response`)",
+                "`handle = runtime.submit_turn({'session_id': ..., 'message': ..., 'stream': True}); resp = handle.result()`",
+                telemetry_actual,
+                "Read `turn_result.stats.input_tokens` / `output_tokens` first (falling back to "
+                "`metadata.get('usage_prompt_tokens') or metadata.get('total_input_tokens_used')` and "
+                "`metadata.get('usage_completion_tokens') or metadata.get('total_output_tokens_used')`).",
+            )
         )
 
-    err_meta = (
-        passed["error_and_timeout_contracts"].metadata
-        if "error_and_timeout_contracts" in passed
-        else {}
-    )
-    wire = err_meta.get("provider_wire_formats") if isinstance(err_meta.get("provider_wire_formats"), dict) else {}
-    if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
-        sse_actual = (
-            f"Expected SSE `done` event `usage` to be parsed for all OpenAI-compatible SSE streams; "
-            f"actual `done.usage` was `None` without `service_vendor='openai'` "
-            f"(`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
-            f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)."
-        )
-    else:
-        sse_actual = (
-            "Expected SSE `done` event `usage` and tool deltas to be parsed for any OpenAI-compatible relay; "
-            "actual `_iter_openai_stream_events()` drops them whenever `preserve_response_facts=False`."
+    if "agent_handoff" in passed:
+        proposals.append(
+            (
+                "Forward `timeout_seconds` & Approval Context in `Handoff` / `build_delegate_tool()`",
+                "`openminion/api/handoff.py:168-170` (`build_delegate_tool._handler_fn`)",
+                "`Agent(handoffs=[Handoff(target=specialist)]).run('...', timeout_seconds=180, approval_callback=cb)`",
+                "Expected `handoff.target.run(message)` to honor caller `timeout_seconds` and confirmation "
+                "policy; actual call invokes `handoff.target.run(message)` bare, silently reverting to the "
+                "`90.0s` runtime default and omitting caller `approval_callback`.",
+                "Add optional `timeout_seconds` and `approval_callback` forwarding fields on `Handoff` "
+                "(defaulting to the active caller run context when unset) and pass them inside `build_delegate_tool()`.",
+            )
         )
 
-    proposals: list[tuple[str, str, str, str, str]] = [
-        (
-            "1. Populate `TurnTelemetry` Token Counts from `turn_result.stats` / `total_*_tokens_used`",
-            "`openminion/services/runtime/daemon.py:549-555` (`_turn_success_response`)",
-            "`handle = runtime.submit_turn({'session_id': ..., 'message': ..., 'stream': True}); resp = handle.result()`",
-            telemetry_actual,
-            "Read `turn_result.stats.input_tokens` / `output_tokens` first (falling back to "
-            "`metadata.get('usage_prompt_tokens') or metadata.get('total_input_tokens_used')` and "
-            "`metadata.get('usage_completion_tokens') or metadata.get('total_output_tokens_used')`).",
-        ),
-        (
-            "2. Forward `timeout_seconds` & Approval Context in `Handoff` / `build_delegate_tool()`",
-            "`openminion/api/handoff.py:168-170` (`build_delegate_tool._handler_fn`)",
-            "`Agent(handoffs=[Handoff(target=specialist)]).run('...', timeout_seconds=180, approval_callback=cb)`",
-            "Expected `handoff.target.run(message)` to honor caller `timeout_seconds` and confirmation "
-            "policy; actual call invokes `handoff.target.run(message)` bare, silently reverting to the "
-            "`90.0s` runtime default and omitting caller `approval_callback`.",
-            "Add optional `timeout_seconds` and `approval_callback` forwarding fields on `Handoff` "
-            "(defaulting to the active caller run context when unset) and pass them inside `build_delegate_tool()`.",
-        ),
-        (
-            "3. Guard `resolve_entry_task_update()` Against Shared-Session `subagent()` & Parallel Tool Calls",
-            "`openminion/modules/brain/loop/context/task_context.py:173-191` (`resolve_entry_task_update`)",
-            "Run two sequential `subagent(parent, ...)` passes sharing a session or emitting parallel entry tool calls.",
-            "Expected each independent subagent turn or multi-tool entry response to execute cleanly; "
-            "actual `resolve_entry_task_update()` raises `ValueError('Missing task_update for a clarification "
-            "or active request')` or `ValueError('Exactly one task_update is allowed per entry response')`, "
-            "detouring into `invalid_task_context_update` clarify prompts.",
-            "Deduplicate identical `task_update` sidecar patches across parallel entry tool calls, and avoid "
-            "inheriting prior-run `resolved_task_context` when entering an isolated `SubagentRunContext`.",
-        ),
-        (
-            "4. Explicit Session Thread Continuity Option on `Agent.run(session_id=...)`",
-            "`openminion/api/agent.py:167-170` & `openminion/modules/task/run/status.py:532-539`",
-            "`agent.run('Remember token X', session_id='s1'); agent.run('Recall token', session_id='s1')`",
-            "Expected consecutive `Agent.run(..., session_id='s1')` calls to share conversation history; "
-            "actual second turn lacks `inbound_metadata['thread_id']`, hits `settled_without_resume`, and "
-            "forks a brand-new thread with zero recall unless callers manually thread `result.thread_id`.",
-            "Expose `resume_latest_thread: bool = True` (or `continue_session`) on `Agent.run()` / "
-            "`Agent._build_payload()` or clearly document mandatory `thread_id` propagation in SDK guides.",
-        ),
-        (
-            "5. Preserve OpenAI SSE `usage` & Tool Deltas Regardless of Relay `service_vendor`",
-            "`openminion/modules/llm/providers/openai/adapter.py:901-907, 961` & `505-524`",
-            "`OpenAIProvider().stream(req, {'base_url': 'https://custom-relay/v1', 'api_key': ..., 'model': ...})`",
-            sse_actual,
-            "Decouple SSE `usage` / `finish_reason` extraction in `_iter_openai_stream_events()` from "
-            "`stream_contract_enabled` (only gate outbound `tools`/`tool_choice` on `stream_contract_enabled` "
-            "while always parsing `chunk.get('usage')` when present in SSE frames).",
-        ),
-    ]
+    if "subagent_delegation" in passed:
+        proposals.append(
+            (
+                "Guard `resolve_entry_task_update()` Against Shared-Session `subagent()` & Parallel Tool Calls",
+                "`openminion/modules/brain/loop/context/task_context.py:173-191` (`resolve_entry_task_update`)",
+                "Run two sequential `subagent(parent, ...)` passes sharing a session or emitting parallel entry tool calls.",
+                "Expected each independent subagent turn or multi-tool entry response to execute cleanly; "
+                "actual `resolve_entry_task_update()` raises `ValueError('Missing task_update for a clarification "
+                "or active request')` or `ValueError('Exactly one task_update is allowed per entry response')`, "
+                "detouring into `invalid_task_context_update` clarify prompts.",
+                "Deduplicate identical `task_update` sidecar patches across parallel entry tool calls, and avoid "
+                "inheriting prior-run `resolved_task_context` when entering an isolated `SubagentRunContext`.",
+            )
+        )
+
+    if "session_continuity" in passed:
+        sess_meta = _passed_probe_metadata(passed, "session_continuity")
+        sess_suffix = _format_present_meta(sess_meta, ("thread_id", "same_session_recalled"))
+        proposals.append(
+            (
+                "Explicit Session Thread Continuity Option on `Agent.run(session_id=...)`",
+                "`openminion/api/agent.py:167-170` & `openminion/modules/task/run/status.py:532-539`",
+                "`agent.run('Remember token X', session_id='s1'); agent.run('Recall token', session_id='s1')`",
+                "Expected consecutive `Agent.run(..., session_id='s1')` calls to share conversation history; "
+                "actual second turn lacks `inbound_metadata['thread_id']`, hits `settled_without_resume`, and "
+                "forks a brand-new thread with zero recall unless callers manually thread `result.thread_id`"
+                f"{sess_suffix}.",
+                "Expose `resume_latest_thread: bool = True` (or `continue_session`) on `Agent.run()` / "
+                "`Agent._build_payload()` or clearly document mandatory `thread_id` propagation in SDK guides.",
+            )
+        )
+
+    if "error_and_timeout_contracts" in passed:
+        err_meta = _passed_probe_metadata(passed, "error_and_timeout_contracts")
+        wire = (
+            err_meta.get("provider_wire_formats")
+            if isinstance(err_meta.get("provider_wire_formats"), dict)
+            else {}
+        )
+        if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
+            sse_actual = (
+                f"Expected SSE `done` event `usage` to be parsed for all OpenAI-compatible SSE streams; "
+                f"actual `done.usage` was `None` without `service_vendor='openai'` "
+                f"(`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
+                f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)."
+            )
+        else:
+            sse_actual = (
+                "Expected SSE `done` event `usage` and tool deltas to be parsed for OpenAI-compatible relays"
+                f"{_format_present_meta(err_meta, ('http_500_attempts', 'timeout_exception'))}; actual "
+                "`_iter_openai_stream_events()` drops them whenever `preserve_response_facts=False`."
+            )
+        proposals.append(
+            (
+                "Preserve OpenAI SSE `usage` & Tool Deltas Regardless of Relay `service_vendor`",
+                "`openminion/modules/llm/providers/openai/adapter.py:901-907, 961` & `505-524`",
+                "`OpenAIProvider().stream(req, {'base_url': 'https://custom-relay/v1', 'api_key': ..., 'model': ...})`",
+                sse_actual,
+                "Decouple SSE `usage` / `finish_reason` extraction in `_iter_openai_stream_events()` from "
+                "`stream_contract_enabled` (only gate outbound `tools`/`tool_choice` on `stream_contract_enabled` "
+                "while always parsing `chunk.get('usage')` when present in SSE frames).",
+            )
+        )
 
     lines = ["## Actionable SDK Improvement Proposals (Repro + Expected vs. Actual)", ""]
-    for heading, target, repro, exp_actual, fix in proposals:
+    if not proposals:
         lines.extend(
             [
-                f"### {heading}",
+                "- No upstream SDK improvement proposals emitted because none of the corresponding diagnostic probes passed in this run.",
+                "",
+            ]
+        )
+        return lines
+
+    for idx, (heading, target, repro, exp_actual, fix) in enumerate(proposals, start=1):
+        lines.extend(
+            [
+                f"### {idx}. {heading}",
                 "",
                 f"- **Target Module**: {target}",
                 f"- **Minimal Repro**: {repro}",

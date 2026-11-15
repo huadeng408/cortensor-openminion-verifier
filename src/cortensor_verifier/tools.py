@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 from urllib.parse import urljoin, urlsplit
 
+import httpcore
 import httpx
 from openminion.tools import tool
 
@@ -284,6 +285,50 @@ def _is_disallowed_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     )
 
 
+def _validate_public_hostname(
+    hostname: str,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    if "%" in hostname:
+        raise ValueError("IPv6 zone identifiers are not allowed.")
+    host_lower = hostname.lower()
+    if host_lower == "localhost" or host_lower.endswith(_BLOCKED_LOCAL_SUFFIXES):
+        raise ValueError(f"Blocked local/private hostname: {hostname!r}.")
+    try:
+        literal_ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        return None
+    if _is_disallowed_ip(literal_ip):
+        raise ValueError(f"Blocked non-public IP address: {literal_ip}.")
+    return literal_ip
+
+
+def _resolve_validated_public_ips(hostname: str, port: int) -> list[str]:
+    clean_host = str(hostname or "").strip().rstrip(".")
+    if not clean_host:
+        raise ValueError("URL must contain a valid hostname.")
+    literal_ip = _validate_public_hostname(clean_host)
+    if literal_ip is not None:
+        return [str(literal_ip)]
+    try:
+        addr_infos = socket.getaddrinfo(clean_host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise ValueError(f"DNS resolution failed for {clean_host!r}: {exc}") from exc
+    if not addr_infos:
+        raise ValueError(f"DNS resolution returned no addresses for {clean_host!r}.")
+    resolved_ips: list[str] = []
+    for info in addr_infos:
+        addr_text = str(info[4][0]).split("%", 1)[0]
+        resolved_ip = ipaddress.ip_address(addr_text)
+        if _is_disallowed_ip(resolved_ip):
+            raise ValueError(
+                f"Blocked non-public resolved IP {resolved_ip} for hostname {clean_host!r}."
+            )
+        ip_str = str(resolved_ip)
+        if ip_str not in resolved_ips:
+            resolved_ips.append(ip_str)
+    return resolved_ips
+
+
 def _validate_public_url(url: str, *, allow_private_network: bool) -> str:
     raw_url = str(url or "").strip()
     if not raw_url:
@@ -301,37 +346,49 @@ def _validate_public_url(url: str, *, allow_private_network: bool) -> str:
         raise ValueError("URL must contain a valid hostname.")
 
     if not allow_private_network:
-        if "%" in hostname:
-            raise ValueError("IPv6 zone identifiers are not allowed.")
-        host_lower = hostname.lower()
-        if host_lower == "localhost" or host_lower.endswith(_BLOCKED_LOCAL_SUFFIXES):
-            raise ValueError(f"Blocked local/private hostname: {hostname!r}.")
-
-        try:
-            literal_ip = ipaddress.ip_address(hostname)
-        except ValueError:
-            literal_ip = None
-
-        if literal_ip is not None:
-            if _is_disallowed_ip(literal_ip):
-                raise ValueError(f"Blocked non-public IP address: {literal_ip}.")
-        else:
-            port = parsed.port or (443 if scheme == "https" else 80)
-            try:
-                addr_infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
-            except OSError as exc:
-                raise ValueError(f"DNS resolution failed for {hostname!r}: {exc}") from exc
-            if not addr_infos:
-                raise ValueError(f"DNS resolution returned no addresses for {hostname!r}.")
-            for info in addr_infos:
-                addr_text = str(info[4][0]).split("%", 1)[0]
-                resolved_ip = ipaddress.ip_address(addr_text)
-                if _is_disallowed_ip(resolved_ip):
-                    raise ValueError(
-                        f"Blocked non-public resolved IP {resolved_ip} for hostname {hostname!r}."
-                    )
+        port = parsed.port or (443 if scheme == "https" else 80)
+        _resolve_validated_public_ips(hostname, port)
 
     return raw_url
+
+
+class _SSRFBlockingNetworkBackend(httpcore.SyncBackend):
+    """Resolve DNS once at TCP dial time, reject non-public IPs, and connect directly by IP."""
+
+    def __init__(self, *, allow_private_network: bool) -> None:
+        self._allow_private_network = allow_private_network
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> Any:
+        if self._allow_private_network:
+            return super().connect_tcp(
+                host,
+                port,
+                timeout=timeout,
+                local_address=local_address,
+                socket_options=socket_options,
+            )
+        validated_ips = _resolve_validated_public_ips(host, port)
+        last_exc: Exception | None = None
+        for candidate_ip in validated_ips:
+            try:
+                return super().connect_tcp(
+                    candidate_ip,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except httpcore.ConnectError as exc:
+                last_exc = exc
+        assert last_exc is not None  # pragma: no cover - resolved_ips is non-empty
+        raise last_exc
 
 
 def _fetch_public_url_excerpt_impl(
@@ -342,11 +399,18 @@ def _fetch_public_url_excerpt_impl(
 ) -> dict[str, Any]:
     current_url = str(url or "").strip()
     visited: set[str] = set()
+    transport = httpx.HTTPTransport(trust_env=False)
+    pool = getattr(transport, "_pool", None)
+    if pool is not None and hasattr(pool, "_network_backend"):
+        pool._network_backend = _SSRFBlockingNetworkBackend(
+            allow_private_network=allow_private_network
+        )
     try:
         with httpx.Client(
             timeout=float(timeout_seconds),
             follow_redirects=False,
             trust_env=False,
+            transport=transport,
             headers={"User-Agent": "cortensor-openminion-verifier/0.1.2"},
         ) as client:
             for _ in range(_MAX_URL_REDIRECTS + 1):
@@ -503,36 +567,13 @@ def build_scoped_verifier_tools(
     )
 
 
-@tool(min_scope="READ_ONLY", idempotent=True)
-def load_delphi_market_fixture(claim_id: str) -> dict[str, Any]:
-    """Load a Delphi/prediction-market claim dossier fixture by claim_id."""
-    return _load_dossier_payload(claim_id)
-
-
-@tool(min_scope="READ_ONLY", idempotent=True)
-def search_public_evidence(query: str, limit: int = 5) -> dict[str, Any]:
-    """Search curated public evidence records matching the query string."""
-    return _search_evidence_records(_merged_evidence_sources(), query, limit=limit)
-
-
-@tool(min_scope="READ_ONLY", idempotent=True)
-def fetch_source_excerpt(source_id: str) -> dict[str, Any]:
-    """Fetch the full verifiable excerpt and metadata for a public evidence source_id."""
-    return _fetch_source_from_records(_merged_evidence_sources(), source_id)
-
-
-@tool(min_scope="READ_ONLY", idempotent=True)
-def fetch_public_url_excerpt(url: str) -> dict[str, Any]:
-    """Fetch and extract a clean text excerpt from a public http/https URL (SSRF-guarded)."""
-    return _fetch_public_url_excerpt_impl(url, allow_private_network=False)
-
-
-READ_ONLY_VERIFIER_TOOLS: tuple[Any, ...] = (
+READ_ONLY_VERIFIER_TOOLS: tuple[Any, ...] = build_scoped_verifier_tools()
+(
     load_delphi_market_fixture,
     search_public_evidence,
     fetch_source_excerpt,
     fetch_public_url_excerpt,
-)
+) = READ_ONLY_VERIFIER_TOOLS
 
 
 def assert_read_only_tools(tools: Iterable[Any]) -> list[Any]:

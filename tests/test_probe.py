@@ -936,13 +936,42 @@ def test_render_what_we_learned_includes_what_broke_and_rough_edges() -> None:
         ],
         dx_findings=[],
     )
+    failing_rendered = render_what_we_learned_md(failing_report)
     failing_rough = _extract_markdown_section(
-        render_what_we_learned_md(failing_report),
+        failing_rendered,
         "What Broke & Rough Edges Encountered",
+    )
+    failing_proposals = _extract_markdown_section(
+        failing_rendered,
+        "Actionable SDK Improvement Proposals (Repro + Expected vs. Actual)",
     )
     assert "agent_handoff" in failing_rough
     assert "TurnTimeoutError" in failing_rough
     assert "input_tokens=11841" not in failing_rough
+    assert "session_continuity" not in failing_rough
+    assert "FreshnessContract" not in failing_rough
+    assert "handoff.py:168-170" not in failing_rough
+    assert "**Target Module**:" not in failing_proposals
+
+    # Single-probe pass emits only that probe's rough edge & proposal (zero unexecuted prose)
+    partial_report = failing_report.model_copy(
+        update={
+            "total_probes": 1,
+            "passed_probes": 1,
+            "failed_probes": 0,
+            "probes": [
+                next(p for p in report.probes if p.probe_id == "submit_turn_streaming_telemetry")
+            ],
+        }
+    )
+    partial_rendered = render_what_we_learned_md(partial_report)
+    partial_proposals = _extract_markdown_section(
+        partial_rendered,
+        "Actionable SDK Improvement Proposals (Repro + Expected vs. Actual)",
+    )
+    assert partial_proposals.count("**Target Module**:") == 1
+    assert "openminion/services/runtime/daemon.py:549-555" in partial_proposals
+    assert "openminion/api/handoff.py:168-170" not in partial_proposals
 
 
 def test_render_what_we_learned_includes_actionable_proposals_and_passes_secret_check() -> None:
