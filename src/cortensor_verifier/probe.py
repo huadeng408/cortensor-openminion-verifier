@@ -1422,9 +1422,10 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
             {
                 "title": "Worktree-Isolated home_root / data_root Containment",
                 "observation": (
-                    f"`create_isolated_runtime()` bound `agent_id={meta.get('agent_id', 'verifier')}` inside isolated "
-                    "`home_root` and `data_root` SQLite/agents.json directories (`reply_len="
-                    f"{meta.get('reply_len', 0)}`), preventing mutation of developer home state on Windows."
+                    f"`create_isolated_runtime()` bound isolated `home_root` and `data_root` SQLite/agents.json "
+                    f"directories (`db_count={meta.get('db_count', 'n/a')}`, "
+                    f"`secret_free_config={meta.get('secret_free_config', 'n/a')}`, "
+                    f"`run_id={meta.get('run_id', 'n/a')}`), preventing mutation of developer home state on Windows."
                 ),
             }
         )
@@ -1438,20 +1439,29 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
                     "openminion==0.1.21 issues `tool_choice='submit_output'` internal classifier turns (`FreshnessContract`, "
                     "`FinalizationStatus`, and `ClosureJudgment` where stubs/gateways must preserve `action_summary`). "
                     "`Agent._coerce_output()` also strips the `f'{agent_id}: '` reply prefix via `_extract_json_object()`, "
-                    f"producing typed schema output (`block={meta.get('block', 'n/a')}`, "
-                    f"`status={meta.get('status', 'n/a')}`, `score={meta.get('score', 'n/a')}`)."
+                    f"producing typed schema output (`status={meta.get('status', 'n/a')}`, "
+                    f"`score={meta.get('score', 'n/a')}`, "
+                    f"`negative_validation_error={meta.get('negative_validation_error', 'n/a')}`, "
+                    f"`fallback_stub_used={meta.get('fallback_stub_used', 'n/a')}`)."
                 ),
             }
         )
 
     if "tool_and_forced_tools" in passed:
         meta = passed["tool_and_forced_tools"].metadata
+        invocations = list(meta.get("invocations") or [])
+        forced_tool = str(meta.get("forced_tool") or "n/a")
+        call_count = len(invocations)
+        forced_invoked = bool(meta.get("forced_tool")) and any(
+            str(item).startswith(f"{forced_tool}:") for item in invocations
+        )
         findings.append(
             {
                 "title": "Read-Only @tool Binding & tool_choice='forced' Deterministic Dispatch",
                 "observation": (
-                    f"Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `{meta.get('tool_name', 'probe_digest')}` "
-                    f"(calls={meta.get('tool_call_count', 0)}, digest_seen={meta.get('digest_seen', False)}) without filesystem writes."
+                    f"Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `{forced_tool}` "
+                    f"(call_count={call_count}, forced_invoked={forced_invoked}, invocations={invocations}) "
+                    "without filesystem writes."
                 ),
             }
         )
@@ -1480,7 +1490,7 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
                     f"Retaining context across turns on the same session required forwarding `thread_id="
                     f"{meta.get('thread_id', 'n/a')}` alongside `session_id`; a distinct session preserved isolation "
                     f"(`same_session_recalled={meta.get('same_session_recalled', False)}`, "
-                    f"`other_session_isolated={meta.get('other_session_isolated', False)}`)."
+                    f"`second_session_isolated={meta.get('second_session_isolated', False)}`)."
                 ),
             }
         )
@@ -1491,8 +1501,11 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
             {
                 "title": "Cross-Runtime MemoryBundle Export/Import Portability",
                 "observation": (
-                    f"`export_session_memory()` and `import_session_memory()` serialized and restored bundle "
-                    f"state (`bundle_id={meta.get('bundle_id', 'n/a')}`, `payload_keys={meta.get('payload_keys', [])}`) "
+                    "OpenMinion primitives `export_bundle()`, `save_bundle()`, `load_bundle()`, and `import_bundle()` "
+                    "(wrapped by `export_session_memory()`/`import_session_memory()`) serialized and restored bundle "
+                    f"state (`bundle_version={meta.get('bundle_version', 'n/a')}`, "
+                    f"`item_count={meta.get('item_count', 'n/a')}`, "
+                    f"`invalid_mode_rejected={meta.get('invalid_mode_rejected', 'n/a')}`) "
                     "into a separate APIRuntime SQLite store."
                 ),
             }
@@ -1506,8 +1519,11 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
                 "observation": (
                     "Separate subagent runtime sessions avoid `resolve_entry_task_update()` `Missing/Duplicate task_update` "
                     "crashes (`openminion/modules/brain/loop/context/task_context.py:153-191`) when dispatching sequential "
-                    f"passes, while explicit `timeout_seconds` prevents falling back to the `90.0s` default (`reply_len="
-                    f"{meta.get('reply_len', 0)}`)."
+                    "passes, while explicit `timeout_seconds` prevents falling back to the `90.0s` default "
+                    f"(`context_id={meta.get('context_id', 'n/a')}`, "
+                    f"`parent_transcript_inherited={meta.get('parent_transcript_inherited', 'n/a')}`, "
+                    f"`tool_allowlist={meta.get('tool_allowlist', [])}`, "
+                    f"`subagent_calls={meta.get('subagent_calls', [])}`)."
                 ),
             }
         )
@@ -1518,8 +1534,9 @@ def build_empirical_dx_findings(probes: Sequence[ProbeCheckResult]) -> list[dict
             {
                 "title": "Peer Handoff Delegation & build_delegate_tool() Timeout/Approval Gap",
                 "observation": (
-                    "Peer handoff reached the specialist target (`handoff_tool_calls="
-                    f"{meta.get('handoff_tool_calls', 0)}`). Notably, `openminion/api/handoff.py:169` invokes "
+                    f"Peer handoff reached specialist `{meta.get('tool_name', 'n/a')}` "
+                    f"(`handoff_invocations={meta.get('handoff_invocations', 0)}`, "
+                    f"`verbatim_ack={meta.get('verbatim_ack', 'n/a')}`). Notably, `openminion/api/handoff.py:169` invokes "
                     "`handoff.target.run(message)` without caller `timeout_seconds` or `approval_callback`, so target "
                     "runtimes need explicit `PolicyGrantInput(max_uses=1)` for autonomous confirmation-gated publication."
                 ),
