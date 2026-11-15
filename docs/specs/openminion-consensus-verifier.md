@@ -63,3 +63,24 @@
 ### Remediation Ticket Graph
 
 `C5` (#8: Telemetry interpolation, session memory summary injection & `LICENSE`, Blocked by: None) → `C6` (#9: Live CLI terminal demo renderer, caption wrapping & submission artifacts regeneration, Blocked by: #8). Spec Issue: #7.
+
+---
+
+## v0.1.2 Submission Readiness & Audit Hardening Addendum (ADR-0002)
+
+### Problem & Solution
+
+1. **MIT Relicensing, Pinned SDK & Community Metadata (`C7`)**: Switch `LICENSE` and `pyproject.toml` from `Apache-2.0` to `MIT`, pin `openminion==0.1.21` strictly, and add upstream `cortensor/community-projects/apps/*` compatible `PROJECTS.yml`, `STATUS.md`, and `RELEASE.md`.
+2. **Scoped Evidence Toolset & Metadata Hygiene (`C7`)**: Replace static module-global fixture lookups with `build_scoped_verifier_tools(fixture_path=..., dossier=..., allow_private_network=False)` returning 4 `@tool(min_scope="READ_ONLY", idempotent=True)` tools (`load_delphi_market_fixture`, `search_public_evidence`, `fetch_source_excerpt`, `fetch_public_url_excerpt`), forwarding CLI `--fixtures` and inline `dossier.metadata["evidence_sources"]` plus SSRF-guarded public URL excerpts, and populating `calibration_status`, `calibrated_model`, and `endpoint_host` in `AuditRunBundle.metadata`.
+3. **Actionable SDK Report & Upstream Bonus Drafts (`C8`)**: Upgrade `render_what_we_learned_md()` and regenerate `docs/WHAT_WE_LEARNED.md` + `docs/BUILDING_BLOCKS_TESTED.md` with structured `What Worked Cleanly`, `What Broke & Rough Edges`, and `Actionable SDK Improvement Proposals` (Repro + Expected vs. Actual), plus `docs/UPSTREAM_OPENMINION_BONUS_DRAFTS.md` covering 3 verified `openminion==0.1.21` upstream bug drafts (`daemon.py:550`, `handoff.py:169`, `task_context.py:179`).
+4. **English CJK-Safe 1080p Live-CLI Demo & Dual-Channel PR Guide (`C9`)**: Convert `demo_renderer.py` to 100% English ASCII/Latin-safe UI/captions (zero CJK `□□□` risk), remove the stale `"Repo kept PRIVATE..."` Scene 7 footer line, show accurate per-scene model badges (`grok-4.6` vs `grok-4.7`) and explicit `--model` flags, embed authentic CLI stdout snippets, clean stale `artifacts/live_calibration.json`, regenerate `artifacts/cortensor_hackathon5_demo.mp4`, and upgrade `docs/PR_SUBMISSION_DRAFT.md` with DoraHacks `#2418` + `cortensor/community-projects` (`dev-huadeng408`) templates and zero broken relative links.
+
+### Approved Testing Seams
+
+- `build_scoped_verifier_tools` & `ConsensusAuditor.audit_claim` / `cli.main`
+- `render_what_we_learned_md` & `export_probe_docs`
+- `render_demo_video` (English ASCII rendering, per-scene model badges, margin pixel bounds, zero secret leakage)
+
+### Remediation Ticket Graph
+
+`C7` (Blocked by: None) and `C8` (Blocked by: None) run in parallel → `C9` (Blocked by: `C7`, `C8`).
