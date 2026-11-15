@@ -23,3 +23,11 @@ _Avoid_: 自动发送, 静默写入
 **Building Block Probe**:
 针对 `OpenMinion` 核心原语逐项执行的确定性行为验证与开发者体验诊断用例，用于生成参赛实测反馈报告。
 _Avoid_: 单元测试集, 冒烟脚本
+
+**Empirical Telemetry Finding**:
+基于 `Building Block Probe` 真实运行元数据逐字段插值生成的实测观察与改进建议条目，严禁混入未命中的占位默认值。
+_Avoid_: 静态文案模板, 占位默认值
+
+**Live Terminal Storyboard**:
+演示视频中将 CLI 命令执行、逐项探针耗时与多轮共识裁决流式日志同屏动态呈现的可视化分镜。
+_Avoid_: 静态幻灯片, 纯文字截图

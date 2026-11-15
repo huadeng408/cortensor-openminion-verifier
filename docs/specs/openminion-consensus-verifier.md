@@ -45,3 +45,21 @@
 ## Further Notes
 
 垂直切片工单图：`C1`（无阻塞）→ `C2` 与 `C3`（并发，均被 `C1` 阻塞）→ `C4`（被 `C2` 与 `C3` 阻塞）。
+
+## Remediation Addendum (v0.1.1 — Submission-Grade Telemetry & Live Terminal Demo)
+
+### Problem & Solution
+
+1. **Telemetry Interpolation Mismatch**: `build_empirical_dx_findings(probes)` previously queried mismatched metadata keys (`reply_len`, `block`, `tool_call_count`, `digest_seen`, `other_session_isolated`, `bundle_id`, `payload_keys`, `handoff_tool_calls`), injecting misleading fallback defaults (`calls=0`, `digest_seen=False`, `other_session_isolated=False`, `bundle_id=n/a`, `handoff_tool_calls=0`) into `fixtures/calibrated_sample_run.json`, `docs/WHAT_WE_LEARNED.md`, and Scene 7 of the demo video. Fix all key lookups to match exact probe metadata and prohibit fallback sentinel leakage into any `Empirical Telemetry Finding`.
+2. **Cross-Audit Session Memory & Import Isolation**: `ConsensusAuditor` previously appended only a message count (`Prior openminion session messages recorded: N`) instead of concise prior verdict/message summaries, and `import_session_memory` retained stale `pass_session_ids` metadata on overwrite. Keep Pass-1 (`corroborator`) and Pass-2 (`skeptic`) blind within the same `audit_claim` turn, inject concise prior-turn summaries across turns/imported sessions, and clear stale `pass_session_ids` on import.
+3. **Live Terminal Demo & Caption Wrapping**: Upgrade `demo_renderer.py` to wrap long bilingual captions inside card bounds (`x <= 1840`), add a multi-stage animated live CLI terminal pane (`Live Terminal Storyboard`) showing progressive command streaming and pass arbitration within scenes, regenerate `calibrated_sample_run.json`, Markdown reports, and the 1080p MP4 video, and add a standard `Apache-2.0` `LICENSE` file at the repository root.
+
+### Approved Testing Seams
+
+- `build_empirical_dx_findings` & `write_probe_markdown_reports`
+- `ConsensusAuditor.audit_claim` & `ConsensusAuditor.import_session_memory`
+- `render_demo_video` (frame layout bounds & intra-scene live terminal animation)
+
+### Remediation Ticket Graph
+
+`C5` (#8: Telemetry interpolation, session memory summary injection & `LICENSE`, Blocked by: None) → `C6` (#9: Live CLI terminal demo renderer, caption wrapping & submission artifacts regeneration, Blocked by: #8). Spec Issue: #7.
