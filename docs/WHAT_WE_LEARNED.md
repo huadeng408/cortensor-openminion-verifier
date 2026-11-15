@@ -8,15 +8,15 @@ Generated directly from `BuildingBlockProbeRunner.run_all()` against `openminion
 
 ### 1. Worktree-Isolated home_root / data_root Containment
 
-`create_isolated_runtime()` bound `agent_id=verifier` inside isolated `home_root` and `data_root` SQLite/agents.json directories (`reply_len=0`), preventing mutation of developer home state on Windows.
+`create_isolated_runtime()` bound isolated `home_root` and `data_root` SQLite/agents.json directories (`db_count=14`, `secret_free_config=True`, `run_id=2d700e1618cd402c803fd8c2f68ddb2d`), preventing mutation of developer home state on Windows.
 
 ### 2. Internal Classifiers (FreshnessContract / FinalizationStatus / ClosureJudgment) & Output Coercion
 
-openminion==0.1.21 issues `tool_choice='submit_output'` internal classifier turns (`FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment` where stubs/gateways must preserve `action_summary`). `Agent._coerce_output()` also strips the `f'{agent_id}: '` reply prefix via `_extract_json_object()`, producing typed schema output (`block=n/a`, `status=OK`, `score=0.99`).
+openminion==0.1.21 issues `tool_choice='submit_output'` internal classifier turns (`FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment` where stubs/gateways must preserve `action_summary`). `Agent._coerce_output()` also strips the `f'{agent_id}: '` reply prefix via `_extract_json_object()`, producing typed schema output (`status=OK`, `score=0.99`, `negative_validation_error=True`, `fallback_stub_used=False`).
 
 ### 3. Read-Only @tool Binding & tool_choice='forced' Deterministic Dispatch
 
-Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `probe_digest` (calls=0, digest_seen=False) without filesystem writes.
+Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `probe_echo_tag` (call_count=2, forced_invoked=True, invocations=['probe_lookup_fact:cortensor-poi', 'probe_echo_tag:forced-c3']) without filesystem writes.
 
 ### 4. approval_callback Boolean Gate & Fail-Closed approval_callback=None Pause/Resume
 
@@ -24,19 +24,19 @@ Binding `@tool(min_scope='READ_ONLY')` with `tool_choice='forced'` invoked `prob
 
 ### 5. Explicit thread_id Required for Multi-Turn Agent.run(session_id=...) Continuity
 
-Retaining context across turns on the same session required forwarding `thread_id=probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8` alongside `session_id`; a distinct session preserved isolation (`same_session_recalled=True`, `other_session_isolated=False`).
+Retaining context across turns on the same session required forwarding `thread_id=probe-sess-a-5b958e6d:e44db35cf831436fab48837c1f5f6be8` alongside `session_id`; a distinct session preserved isolation (`same_session_recalled=True`, `second_session_isolated=True`).
 
 ### 6. Cross-Runtime MemoryBundle Export/Import Portability
 
-`export_session_memory()` and `import_session_memory()` serialized and restored bundle state (`bundle_id=n/a`, `payload_keys=[]`) into a separate APIRuntime SQLite store.
+OpenMinion primitives `export_bundle()`, `save_bundle()`, `load_bundle()`, and `import_bundle()` (wrapped by `export_session_memory()`/`import_session_memory()`) serialized and restored bundle state (`bundle_version=memory_bundle.v1`, `item_count=1`, `invalid_mode_rejected=True`) into a separate APIRuntime SQLite store.
 
 ### 7. Isolated Subagent Passes, task_update Collisions & 90s Timeout Forwarding
 
-Separate subagent runtime sessions avoid `resolve_entry_task_update()` `Missing/Duplicate task_update` crashes (`openminion/modules/brain/loop/context/task_context.py:153-191`) when dispatching sequential passes, while explicit `timeout_seconds` prevents falling back to the `90.0s` default (`reply_len=0`).
+Separate subagent runtime sessions avoid `resolve_entry_task_update()` `Missing/Duplicate task_update` crashes (`openminion/modules/brain/loop/context/task_context.py:153-191`) when dispatching sequential passes, while explicit `timeout_seconds` prevents falling back to the `90.0s` default (`context_id=subagent-bf6c16b7d24d`, `parent_transcript_inherited=False`, `tool_allowlist=['probe_subagent_tool']`, `subagent_calls=['subagent-check']`).
 
 ### 8. Peer Handoff Delegation & build_delegate_tool() Timeout/Approval Gap
 
-Peer handoff reached the specialist target (`handoff_tool_calls=0`). Notably, `openminion/api/handoff.py:169` invokes `handoff.target.run(message)` without caller `timeout_seconds` or `approval_callback`, so target runtimes need explicit `PolicyGrantInput(max_uses=1)` for autonomous confirmation-gated publication.
+Peer handoff reached specialist `transfer_to_specialist` (`handoff_invocations=1`, `verbatim_ack=False`). Notably, `openminion/api/handoff.py:169` invokes `handoff.target.run(message)` without caller `timeout_seconds` or `approval_callback`, so target runtimes need explicit `PolicyGrantInput(max_uses=1)` for autonomous confirmation-gated publication.
 
 ### 9. APIRuntime.submit_turn() TurnChunks & TurnTelemetry vs TurnResponse.stats
 
