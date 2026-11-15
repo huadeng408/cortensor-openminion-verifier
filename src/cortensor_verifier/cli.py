@@ -228,6 +228,7 @@ def _run_audit(args: argparse.Namespace) -> int:
         api_key_env=args.api_key_env,
         home_root=args.home_root,
         data_root=args.data_root,
+        fixture_path=args.fixtures,
         provider_retry_max_attempts=args.max_retries,
         timeout_seconds=args.timeout_seconds,
     ) as auditor:
@@ -241,6 +242,7 @@ def _run_audit(args: argparse.Namespace) -> int:
             approval_id=args.approval_id,
             publication_log_path=args.publication_log,
             memory_bundle_out=args.memory_bundle_out,
+            fixture_path=args.fixtures,
         )
 
     rendered = bundle.model_dump_json(indent=2)

@@ -33,10 +33,12 @@ from cortensor_verifier.models import (
     TelemetrySummary,
     VerifierPassResult,
 )
-from cortensor_verifier.runtime_factory import create_isolated_runtime
+from cortensor_verifier.probe import infer_calibration_status, sanitize_base_url
+from cortensor_verifier.runtime_factory import build_isolated_config, create_isolated_runtime
 from cortensor_verifier.tools import (
     READ_ONLY_VERIFIER_TOOLS,
     assert_read_only_tools,
+    build_scoped_verifier_tools,
     make_publish_consensus_verdict_tool,
 )
 
@@ -250,6 +252,8 @@ class ConsensusAuditor:
         data_root: str | Path | None = None,
         config_path: str | Path | None = None,
         tools: Sequence[Any] | None = None,
+        fixture_path: str | Path | None = None,
+        allow_private_network: bool = False,
         tool_call_strategy: Literal["native", "hybrid"] = "native",
         timeout_seconds: int | None = None,
         provider_retry_max_attempts: int = 2,
@@ -257,9 +261,19 @@ class ConsensusAuditor:
         cortensor_api_mode: str = "auto",
         cortensor_session_id: int = 1,
     ) -> None:
-        self.tools = assert_read_only_tools(
-            READ_ONLY_VERIFIER_TOOLS if tools is None else tools
+        self._explicit_tools = tools is not None
+        self.fixture_path = fixture_path
+        self.allow_private_network = allow_private_network
+        initial_tools = (
+            tools
+            if tools is not None
+            else build_scoped_verifier_tools(
+                fixture_path=fixture_path,
+                dossier=None,
+                allow_private_network=allow_private_network,
+            )
         )
+        self.tools = assert_read_only_tools(initial_tools)
         self._allowed_tool_names = {item.tool_decl.name for item in self.tools}
         self._runtime = runtime
         self._owns_runtime = runtime is None
@@ -322,23 +336,48 @@ class ConsensusAuditor:
             base = Path(self._ensure_runtime().data_root)
         return base if base.name == ".openminion-state" else base / ".openminion-state"
 
+    def _resolve_endpoint_and_model(self, cfg: Any = None) -> tuple[str | None, str | None]:
+        """Resolve the effective provider base URL and model without forcing runtime boot."""
+        resolved_cfg = cfg
+        if resolved_cfg is None:
+            resolved_cfg = (
+                getattr(self._runtime, "config", None)
+                if self._runtime is not None
+                else build_isolated_config(
+                    preset=self.preset,
+                    base_url=self.base_url,
+                    model=self.model,
+                    persist=False,
+                )
+            )
+        providers = getattr(resolved_cfg, "providers", None) if resolved_cfg is not None else None
+        prov_cfg = (
+            (
+                getattr(providers, "cortensor", None)
+                if self.preset == "cortensor-router"
+                else getattr(providers, "openai", None)
+            )
+            if providers is not None
+            else None
+        )
+        base_url = self.base_url or getattr(prov_cfg, "base_url", None)
+        model = self.model or getattr(prov_cfg, "model", None)
+        return (str(base_url) if base_url else None, str(model) if model else None)
+
+    def _calibration_metadata(self) -> dict[str, str]:
+        """Return sanitized calibration provenance fields for ``AuditRunBundle.metadata``."""
+        resolved_base_url, resolved_model = self._resolve_endpoint_and_model()
+        return {
+            "calibration_status": infer_calibration_status(resolved_base_url),
+            "calibrated_model": resolved_model or "unknown",
+            "endpoint_host": sanitize_base_url(resolved_base_url),
+        }
+
     def _ensure_publisher_runtime(self) -> APIRuntime:
         if self._publisher_runtime is None:
             pub_root = self._state_root() / "publisher_runtime"
             runtime = self._ensure_runtime()
-            cfg = getattr(runtime, "config", None)
-            providers = getattr(cfg, "providers", None) if cfg is not None else None
-            prov_cfg = (
-                (
-                    getattr(providers, "cortensor", None)
-                    if self.preset == "cortensor-router"
-                    else getattr(providers, "openai", None)
-                )
-                if providers is not None
-                else None
-            )
-            base_url = self.base_url or getattr(prov_cfg, "base_url", None)
-            model = self.model or getattr(prov_cfg, "model", None)
+            base_url, model = self._resolve_endpoint_and_model(getattr(runtime, "config", None))
             self._publisher_runtime = create_isolated_runtime(
                 preset=self.preset,
                 base_url=base_url,
@@ -723,9 +762,13 @@ class ConsensusAuditor:
         forced_tools: list[str] | None = None,
         session_id: str | None = None,
         session_context: str = "",
+        tools: Sequence[Any] | None = None,
     ) -> tuple[VerifierPassResult, AgentRunResult[VerifierPassResult]]:
+        active_tools = assert_read_only_tools(self.tools if tools is None else tools)
+        allowed_names = {item.tool_decl.name for item in active_tools}
+        self._allowed_tool_names = allowed_names
         if forced_tools:
-            unknown = [name for name in forced_tools if name not in self._allowed_tool_names]
+            unknown = [name for name in forced_tools if name not in allowed_names]
             if unknown:
                 raise ValueError(
                     f"forced_tools {unknown!r} are not registered READ_ONLY verifier tools."
@@ -737,7 +780,7 @@ class ConsensusAuditor:
             agent_id=self.agent_id,
             model=self.model,
             instructions=instructions or self._build_instructions(pass_role),
-            tools=list(self.tools),
+            tools=list(active_tools),
             forced_tools=forced_tools,
             output_type=VerifierPassResult,
         )
@@ -756,7 +799,10 @@ class ConsensusAuditor:
         *,
         session_id: str | None = None,
         session_context: str = "",
+        tools: Sequence[Any] | None = None,
     ) -> list[tuple[str, VerifierPassResult, AgentRunResult[VerifierPassResult]]]:
+        active_tools = assert_read_only_tools(self.tools if tools is None else tools)
+        self._allowed_tool_names = {item.tool_decl.name for item in active_tools}
         runtime = self._ensure_runtime()
         coordinator = Agent(
             name="verifier_coordinator",
@@ -767,7 +813,7 @@ class ConsensusAuditor:
                 "Coordinate independent corroborator and skeptic verification passes "
                 "using READ_ONLY evidence tools."
             ),
-            tools=list(self.tools),
+            tools=list(active_tools),
         )
         outcomes: list[tuple[str, VerifierPassResult, AgentRunResult[VerifierPassResult]]] = []
         turn_timeout = self._turn_timeout()
@@ -777,7 +823,7 @@ class ConsensusAuditor:
                 name=role,
                 model=self.model,
                 instructions=self._build_instructions(role),
-                tools=list(self.tools),
+                tools=list(active_tools),
                 output_type=VerifierPassResult,
                 timeout_seconds=int(turn_timeout) if turn_timeout is not None else None,
             )
@@ -1147,6 +1193,7 @@ class ConsensusAuditor:
                 metadata={
                     "telemetry": prior_telemetry.model_dump(mode="json"),
                     "publication": pub_res.model_dump(mode="json"),
+                    **self._calibration_metadata(),
                 },
             )
 
@@ -1173,6 +1220,7 @@ class ConsensusAuditor:
                 metadata={
                     "telemetry": prior_telemetry.model_dump(mode="json"),
                     "publication": pub_res.model_dump(mode="json"),
+                    **self._calibration_metadata(),
                 },
             )
 
@@ -1227,6 +1275,7 @@ class ConsensusAuditor:
                     "stats": res_run.stats,
                     "telemetry": agg_tel.model_dump(mode="json"),
                     "publication": pub_res.model_dump(mode="json"),
+                    **self._calibration_metadata(),
                 },
             )
 
@@ -1257,6 +1306,7 @@ class ConsensusAuditor:
                 metadata={
                     "telemetry": prior_telemetry.model_dump(mode="json"),
                     "publication": pub_res.model_dump(mode="json"),
+                    **self._calibration_metadata(),
                 },
             )
 
@@ -1321,6 +1371,7 @@ class ConsensusAuditor:
                 "stats": res_run.stats,
                 "telemetry": agg_tel.model_dump(mode="json"),
                 "publication": pub_res.model_dump(mode="json"),
+                **self._calibration_metadata(),
             },
         )
 
@@ -1337,6 +1388,7 @@ class ConsensusAuditor:
         approval_id: str | None = None,
         publication_log_path: str | Path | None = None,
         memory_bundle_out: str | Path | None = None,
+        fixture_path: str | Path | None = None,
     ) -> AuditRunBundle:
         """Run dual-pass (or single-pass) consensus verification with optional Handoff publication."""
         if thread_id is not None:
@@ -1361,6 +1413,20 @@ class ConsensusAuditor:
                 memory_bundle_out=memory_bundle_out,
             )
 
+        effective_fixture_path = fixture_path if fixture_path is not None else self.fixture_path
+        active_tools = (
+            list(self.tools)
+            if self._explicit_tools
+            else assert_read_only_tools(
+                build_scoped_verifier_tools(
+                    fixture_path=effective_fixture_path,
+                    dossier=dossier,
+                    allow_private_network=self.allow_private_network,
+                )
+            )
+        )
+        self._allowed_tool_names = {item.tool_decl.name for item in active_tools}
+
         session_context = self._build_session_context_block(session_id)
         telemetry_runs: list[tuple[str, AgentRunResult[Any]]] = []
         tool_calls: list[str] = []
@@ -1371,6 +1437,7 @@ class ConsensusAuditor:
                 pass_role="primary",
                 session_id=session_id,
                 session_context=session_context,
+                tools=active_tools,
             )
             tool_calls = self._extract_tool_calls(run_result)
             consensus = synthesize_consensus(dossier.claim_id, [pass_result])
@@ -1381,6 +1448,7 @@ class ConsensusAuditor:
                 dossier,
                 session_id=session_id,
                 session_context=session_context,
+                tools=active_tools,
             )
             passes: list[VerifierPassResult] = []
             for role, pass_out, run_res in pass_outcomes:
@@ -1427,6 +1495,7 @@ class ConsensusAuditor:
             "per_pass_stats": {
                 role: dict(res.stats or {}) for role, res in telemetry_runs
             },
+            **self._calibration_metadata(),
         }
         if saved_bundle is not None:
             metadata["session_memory"] = {

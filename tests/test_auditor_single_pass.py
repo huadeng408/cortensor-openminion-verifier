@@ -32,6 +32,7 @@ def test_tools_declare_read_only_and_idempotent_metadata() -> None:
         "load_delphi_market_fixture",
         "search_public_evidence",
         "fetch_source_excerpt",
+        "fetch_public_url_excerpt",
     }
     assert {fn.tool_decl.name for fn in READ_ONLY_VERIFIER_TOOLS} == expected_names
     for fn in READ_ONLY_VERIFIER_TOOLS:
