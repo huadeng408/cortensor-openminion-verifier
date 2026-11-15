@@ -23,42 +23,42 @@ ANIMATION_STAGES = 5
 _SCENE_TITLES: tuple[tuple[str, str], ...] = (
     (
         "1 · Problem & Isolated OpenMinion 0.1 Architecture",
-        "场景 1 / 7 · 多源声明验证痛点与零密钥隔离 OpenMinion 运行时架构",
+        "Scene 1 / 7 · Eliminating single-pass hallucinations with isolated runtimes",
     ),
     (
         "2 · Claim Dossier & READ_ONLY Evidence Tools",
-        "场景 2 / 7 · 声明档案装载与只读受控 @tool 证据检索链路",
+        "Scene 2 / 7 · Scoped ClaimDossier loading and READ_ONLY @tool evidence retrieval",
     ),
     (
         "3 · Redundant Verifier Passes (subagent Isolation)",
-        "场景 3 / 7 · 佐证者 (Corroborator) 与质疑者 (Skeptic) 双视角冗余子代理",
+        "Scene 3 / 7 · Independent Corroborator and Skeptic subagent() verification",
     ),
     (
         "4 · Consensus Verdict & Session MemoryBundle",
-        "场景 4 / 7 · 结构化 Consensus Verdict 合成与跨轮会话记忆隔离",
+        "Scene 4 / 7 · Structured ConsensusVerdict synthesis and scoped session continuity",
     ),
     (
         "5 · Approval-Gated Publication (Handoff Pause/Resume)",
-        "场景 5 / 7 · 基于 OpenMinion Handoff 的 Fail-Closed 人工确认发布门禁",
+        "Scene 5 / 7 · Fail-closed operator approval gate over OpenMinion Handoff",
     ),
     (
         "6 · OpenMinion 0.1 Building Block Probe Matrix (10/10)",
-        "场景 6 / 7 · 实测 10 大核心 OpenMinion 0.1 模块的延迟与契约验证矩阵",
+        "Scene 6 / 7 · End-to-end latency and contract verification across 10 SDK primitives",
     ),
     (
         "7 · Key Empirical DX Takeaways & Reproducible CLI",
-        "场景 7 / 7 · 一手开发者体验 (What We Learned) 洞察与一键复现命令",
+        "Scene 7 / 7 · Empirical What We Learned findings and one-command reproducibility",
     ),
 )
 
 _SCENE_CAPTIONS: tuple[str, ...] = (
-    "Single-pass LLMs hallucinate & leak side effects; OpenMinion isolates credentials, policies, and subagents. | 单轮模型易幻觉与越权，OpenMinion 隔离凭据、策略与子代理。",
-    "Only min_scope='READ_ONLY' @tool functions bind to verifier passes — zero workspace writes possible. | 核查阶段仅注册 READ_ONLY 工具，从接口层阻断本地写入。",
-    "Two independent subagent() passes inspect the Claim Dossier with zero shared reasoning leaks. | 独立 corroborator 与 skeptic 双子代理背靠背交叉核验声明。",
-    "synthesize_consensus() fuses dual verdicts, agreement_score, and portable MemoryBundle JSON. | 融合双路径裁决与一致度分数，并导出跨会话记忆快照。",
-    "External publication routes via Handoff pause -> thread_id snapshot -> PolicyGrantInput(max_uses=1). | 外部发布经 Handoff 审批暂停与单次授权门禁后方可落盘。",
-    "All 10 OpenMinion 0.1 building blocks verified end-to-end against real APIRuntime and live inference. | 10 项 OpenMinion 0.1 核心积木全部通过真实运行时端到端实测。",
-    "Reproduce every audit, probe matrix, and captioned 1080p walkthrough offline or live with one CLI command. | 一条 CLI 命令即可离线或联网复现全量核验、探针矩阵与 1080p 演示。",
+    "Single-pass LLMs hallucinate and risk side effects; OpenMinion isolates credentials, policies, and subagent execution.",
+    "Only min_scope='READ_ONLY' @tool bindings attach to verifier passes, preventing workspace writes at the policy layer.",
+    "Independent corroborator and skeptic subagent() passes inspect the Claim Dossier with zero shared transcript leakage.",
+    "synthesize_consensus() fuses dual pass verdicts and agreement_score while exporting a session-scoped MemoryBundle.",
+    "External publication routes via Handoff pause -> thread_id checkpoint -> single-use PolicyGrantInput(max_uses=1).",
+    "All 10 OpenMinion 0.1 building blocks verified end-to-end against real APIRuntime and live LLM inference.",
+    "Reproduce every consensus audit, 10-probe SDK matrix, and captioned 1080p walkthrough offline or live in one CLI call.",
 )
 
 
@@ -135,10 +135,14 @@ def _load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFon
     candidates: list[Path]
     win_fonts = Path(r"C:\Windows\Fonts")
     linux_fonts = (
-        Path("/usr/share/fonts/opentype/noto"),
-        Path("/usr/share/fonts/truetype/noto"),
-        Path("/usr/share/fonts/truetype/wqy"),
         Path("/usr/share/fonts/truetype/dejavu"),
+        Path("/usr/share/fonts/truetype/liberation"),
+        Path("/usr/share/fonts/truetype/liberation2"),
+        Path("/usr/share/fonts/truetype/noto"),
+        Path("/usr/share/fonts/opentype/noto"),
+        Path("/usr/share/fonts/dejavu"),
+        Path("/usr/share/fonts/liberation"),
+        Path("/usr/share/fonts/TTF"),
         Path("/usr/share/fonts"),
     )
     mac_fonts = (
@@ -149,61 +153,55 @@ def _load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFon
     if mono:
         candidates = [
             win_fonts / ("consolab.ttf" if bold else "consola.ttf"),
-            win_fonts / "msyh.ttc",
-            win_fonts / "arial.ttf",
+            win_fonts / ("courbd.ttf" if bold else "cour.ttf"),
+            win_fonts / ("arialbd.ttf" if bold else "arial.ttf"),
             *(
                 p / name
                 for p in linux_fonts
                 for name in (
                     "DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf",
-                    "NotoSansMono-Regular.ttf",
-                    "NotoSansCJK-Regular.ttc",
+                    "LiberationMono-Bold.ttf" if bold else "LiberationMono-Regular.ttf",
+                    "NotoSansMono-Bold.ttf" if bold else "NotoSansMono-Regular.ttf",
                 )
             ),
             *(p / name for p in mac_fonts for name in ("Menlo.ttc", "Monaco.ttf", "Courier New.ttf")),
         ]
     elif bold:
         candidates = [
-            win_fonts / "msyhbd.ttc",
-            win_fonts / "simhei.ttf",
             win_fonts / "segoeuib.ttf",
             win_fonts / "arialbd.ttf",
             *(
                 p / name
                 for p in linux_fonts
                 for name in (
-                    "NotoSansCJK-Bold.ttc",
-                    "NotoSerifCJK-Bold.ttc",
-                    "wqy-zenhei.ttc",
                     "DejaVuSans-Bold.ttf",
+                    "LiberationSans-Bold.ttf",
+                    "NotoSans-Bold.ttf",
                 )
             ),
             *(
                 p / name
                 for p in mac_fonts
-                for name in ("PingFang.ttc", "STHeiti Medium.ttc", "Arial Bold.ttf", "Helvetica.ttc")
+                for name in ("Helvetica.ttc", "Arial Bold.ttf", "HelveticaNeue.ttc")
             ),
         ]
     else:
         candidates = [
-            win_fonts / "msyh.ttc",
             win_fonts / "segoeui.ttf",
             win_fonts / "arial.ttf",
             *(
                 p / name
                 for p in linux_fonts
                 for name in (
-                    "NotoSansCJK-Regular.ttc",
-                    "NotoSansSC-Regular.otf",
-                    "wqy-microhei.ttc",
-                    "wqy-zenhei.ttc",
                     "DejaVuSans.ttf",
+                    "LiberationSans-Regular.ttf",
+                    "NotoSans-Regular.ttf",
                 )
             ),
             *(
                 p / name
                 for p in mac_fonts
-                for name in ("PingFang.ttc", "STHeiti Light.ttc", "Arial.ttf", "Helvetica.ttc")
+                for name in ("Helvetica.ttc", "Arial.ttf", "HelveticaNeue.ttc")
             ),
         ]
 
@@ -213,7 +211,10 @@ def _load_font(size: int, *, bold: bool = False, mono: bool = False) -> ImageFon
                 return ImageFont.truetype(str(font_path), size=size)
             except OSError:
                 continue
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 def _wrap_text(
@@ -302,14 +303,14 @@ def _fit_caption_lines(
     if draw.textlength(clean, font=font) <= max_width:
         return [clean]
     if " | " in clean and max_lines >= 2:
-        en_part, zh_part = (part.strip() for part in clean.split(" | ", 1))
+        first_part, second_part = (part.strip() for part in clean.split(" | ", 1))
         if (
-            en_part
-            and zh_part
-            and draw.textlength(en_part, font=font) <= max_width
-            and draw.textlength(zh_part, font=font) <= max_width
+            first_part
+            and second_part
+            and draw.textlength(first_part, font=font) <= max_width
+            and draw.textlength(second_part, font=font) <= max_width
         ):
-            return [en_part, zh_part]
+            return [first_part, second_part]
     return _wrap_text(draw, clean, font, max_width=max_width, max_lines=max_lines)
 
 
@@ -479,8 +480,8 @@ def _build_scene_terminal_lines(
 
     claim_id = str(audit.get("claim_id") or dossier.get("claim_id") or "delphi-btc-etf-2024")
     preset = str(audit.get("preset") or probe.get("preset") or "openai-compatible")
-    audit_model = str((audit.get("metadata") or {}).get("calibrated_model") or probe.get("model") or "grok-4.6")
-    probe_model = str(probe.get("model") or audit_model)
+    audit_model = _scene_model_label(0, audit=audit, probe=probe)
+    probe_model = _scene_model_label(5, audit=audit, probe=probe)
     session_id = str(audit.get("session_id") or "cal-btc-etf-01")
     tool_calls = [str(item) for item in (audit.get("tool_calls") or [])]
 
@@ -489,18 +490,20 @@ def _build_scene_terminal_lines(
             ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --preset {preset} --model {audit_model} --multi-pass"),
             ("info", "[runtime] APIRuntime.from_config_path() -> .openminion/agents.json (api_key='', secret_free=True)"),
             ("info", f"[config] sdk=openminion=={probe.get('sdk_version', '0.1.21')} | host={probe.get('base_url_host', 'redacted')} | http_reuse=False"),
-            ("highlight", f"[pipeline] ClaimDossier({claim_id}) -> corroborator + skeptic -> synthesize_consensus() -> Handoff"),
+            ("highlight", f'[stdout] {{"claim_id": "{claim_id}", "preset": "{preset}", "calibrated_model": "{audit_model}"}}'),
             ("ok", "[ready] isolated SQLite data_root active; zero developer home state mutated."),
         ]
 
     if scene_idx == 1:
-        hints = ", ".join(str(h) for h in (dossier.get("source_hints") or ["sec-spot-btc-2024-01-10"]))
-        tools_str = ", ".join(tool_calls) or "load_delphi_market_fixture, search_public_evidence, fetch_source_excerpt"
+        hints_json = json.dumps(list(dossier.get("source_hints") or ["sec-spot-btc-2024-01-10"]))
+        tools_json = json.dumps(
+            tool_calls or ["load_delphi_market_fixture", "search_public_evidence", "fetch_source_excerpt"]
+        )
         return [
-            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --fixtures fixtures/claim_dossiers.json --preset {preset} --multi-pass"),
-            ("info", f"[dossier] loaded claim_id={claim_id} | hints=[{hints}]"),
-            ("highlight", f"[policy-guard] assert_read_only_tools(): min_scope='READ_ONLY' enforced across {max(len(tool_calls), 3)} tool(s)"),
-            ("info", f"[tool-exec] invoked: {tools_str}"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --fixtures fixtures/claim_dossiers.json --model {audit_model} --multi-pass"),
+            ("info", f'[dossier] {{"claim_id": "{claim_id}", "source_hints": {hints_json}}}'),
+            ("highlight", f"[policy-guard] assert_read_only_tools(): min_scope='READ_ONLY' enforced across {max(len(tool_calls), 4)} tool(s)"),
+            ("info", f'[tool-exec] "tool_calls": {tools_json}'),
             ("ok", "[verified] primary evidence excerpts retrieved; workspace_writes=0."),
         ]
 
@@ -512,16 +515,16 @@ def _build_scene_terminal_lines(
         return [
             ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --preset {preset} --model {audit_model} --multi-pass --session-id {session_id}"),
             ("info", "[isolation] SubagentRunContext: parent_transcript_inherited=False memory_posture='none' tools=READ_ONLY"),
-            ("highlight", f"[pass:corroborator] verdict={p0.get('verdict')} conf={float(p0.get('confidence', 0.96)):.2f} reqs={t0.get('requests', 0)} latency={t0.get('latency_ms', 0)}ms"),
-            ("highlight", f"[pass:skeptic]      verdict={p1.get('verdict')} conf={float(p1.get('confidence', 0.92)):.2f} reqs={t1.get('requests', 0)} latency={t1.get('latency_ms', 0)}ms"),
+            ("highlight", f"[pass:corroborator] verdict={p0.get('verdict')} conf={float(p0.get('confidence', 0.96)):.2f} requests={t0.get('requests', 0)} total_tokens={t0.get('total_tokens', 0)}"),
+            ("highlight", f"[pass:skeptic]      verdict={p1.get('verdict')} conf={float(p1.get('confidence', 0.92)):.2f} requests={t1.get('requests', 0)} total_tokens={t1.get('total_tokens', 0)}"),
             ("ok", "[blind-check] dual redundant passes completed without cross-pass transcript leakage."),
         ]
 
     if scene_idx == 3:
         return [
-            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --preset {preset} --multi-pass --session-id {session_id} --memory-bundle-out mem.json"),
-            ("highlight", f"[consensus] verdict={consensus.get('final_verdict', 'SUPPORTED')} agreement={float(consensus.get('agreement_score', 0.98)):.2f} mean_conf={float(consensus.get('mean_confidence', 0.94)):.2f}"),
-            ("info", f"[telemetry] requests={telemetry.get('requests', 0)} prompt_tok={telemetry.get('prompt_tokens', 0)} completion_tok={telemetry.get('completion_tokens', 0)} total_ms={telemetry.get('total_latency_ms', 0)}"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --model {audit_model} --multi-pass --session-id {session_id} --memory-bundle-out mem.json"),
+            ("highlight", f'[stdout] {{"claim_id": "{claim_id}", "final_verdict": "{consensus.get("final_verdict", "SUPPORTED")}", "agreement_score": {float(consensus.get("agreement_score", 0.98)):.2f}}}'),
+            ("info", f'[telemetry] {{"requests": {telemetry.get("requests", 0)}, "prompt_tokens": {telemetry.get("prompt_tokens", 0)}, "completion_tokens": {telemetry.get("completion_tokens", 0)}, "total_tokens": {telemetry.get("total_tokens", 0)}}}'),
             ("info", f"[memory] export_bundle(session='{session_id}') -> save_bundle() -> import_bundle() | cross_session_guard=ON"),
             ("ok", f"[outcome] requires_human_review={consensus.get('requires_human_review', False)} | {consensus.get('disagreement_summary', '')}"),
         ]
@@ -532,31 +535,46 @@ def _build_scene_terminal_lines(
         appr_id = str(publication.get("approval_id") or "appr-cal-01")
         log_path = str(publication.get("log_path") or ".openminion-state/published_verdicts.jsonl")
         return [
-            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --publish --approval-mode {mode} --session-id {session_id}"),
+            ("cmd", f"$ cortensor-verifier audit --claim-id {claim_id} --model {audit_model} --publish --approval-mode {mode} --session-id {session_id}"),
             ("info", "[handoff] coordinator -> transfer_to_publisher -> @tool(dangerous=True, min_scope='WRITE_SAFE')"),
             ("highlight", f"[gate:pause] approval_callback=None -> paused fail-closed | thread_id={tid}"),
             ("info", f"[gate:grant] resume_publication(allow_once) -> PolicyGrantInput(max_uses=1, ttl=5m) approval_id={appr_id}"),
-            ("ok", f"[committed] status={publication.get('publication_status', 'published')} log={log_path} | replay=DENIED"),
+            ("ok", f'[stdout] {{"publication_status": "{publication.get("publication_status", "published")}", "published": {json.dumps(bool(publication.get("published", True)))}, "log_path": "{log_path}"}}'),
         ]
 
     if scene_idx == 5:
         passed_n = probe.get("passed_probes", len(EXPECTED_PROBE_IDS))
         total_n = probe.get("total_probes", len(EXPECTED_PROBE_IDS))
         total_ms = float(probe.get("total_latency_ms", 0.0))
+        stream_meta: dict[str, Any] = {}
+        for item in probes:
+            if item.get("probe_id") == "submit_turn_streaming_telemetry":
+                stream_meta = dict(item.get("metadata") or {})
+                break
+        if stream_meta:
+            stream_line = (
+                f"[stream] TurnChunk(count={stream_meta.get('chunk_count', 0)}) | "
+                f"TurnTelemetry(tokens_in={stream_meta.get('tokens_in', 0)}, tokens_out={stream_meta.get('tokens_out', 0)}) vs "
+                f"stats(in={stream_meta.get('stats_input_tokens', 0)}, out={stream_meta.get('stats_output_tokens', 0)})"
+            )
+        else:
+            stream_line = (
+                f"[dx-export] TurnChunk streaming verified; emitted {len(findings)} empirical DX finding(s) -> WHAT_WE_LEARNED.md"
+            )
         return [
             ("cmd", f"$ cortensor-verifier probe --preset {preset} --model {probe_model} --timeout-seconds 180 --export-docs"),
             ("info", f"[probes 01..05] iso={_fmt_probe_latency(probes, 0)} struct={_fmt_probe_latency(probes, 1)} tools={_fmt_probe_latency(probes, 2)} policy={_fmt_probe_latency(probes, 3)} sess={_fmt_probe_latency(probes, 4)}"),
             ("info", f"[probes 06..10] mem={_fmt_probe_latency(probes, 5)} sub={_fmt_probe_latency(probes, 6)} handoff={_fmt_probe_latency(probes, 7)} stream={_fmt_probe_latency(probes, 8)} err={_fmt_probe_latency(probes, 9)}"),
-            ("highlight", f"[dx-export] emitted {len(findings)} empirical DX finding(s) -> docs/BUILDING_BLOCKS_TESTED.md & WHAT_WE_LEARNED.md"),
-            ("ok", f"[suite-pass] {passed_n}/{total_n} building blocks PASSED (failed={probe.get('failed_probes', 0)}) total={total_ms:.2f} ms"),
+            ("highlight", stream_line),
+            ("ok", f'[stdout] {{"passed_probes": {passed_n}, "total_probes": {total_n}, "failed_probes": {probe.get("failed_probes", 0)}, "total_latency_ms": {total_ms:.2f}}}'),
         ]
 
     return [
         ("cmd", "$ cortensor-verifier render-demo --sample-json fixtures/calibrated_sample_run.json --duration-seconds 75 --fps 10"),
-        ("info", f"[inputs] claim={claim_id} ({audit_model}) | probes={probe.get('passed_probes', 10)}/{probe.get('total_probes', 10)} ({probe_model}) | findings={len(findings)}"),
+        ("info", f'[inputs] "claim_id": "{claim_id}" ({audit_model}) | "passed_probes": {probe.get("passed_probes", 10)}/{probe.get("total_probes", 10)} ({probe_model}) | findings={len(findings)}'),
         ("highlight", "[secret-scan] assert_no_plaintext_secrets() -> 0 leaks | private relay URLs redacted"),
-        ("info", "[encoder] libx264 yuv420p 1920x1080 @ 10fps -> 750 frames across 7 animated scenes"),
-        ("ok", "[done] artifacts/cortensor_hackathon5_demo.mp4 ready for Hackathon #5 PR submission."),
+        ("info", f'[telemetry] "requests": {telemetry.get("requests", 0)}, "total_tokens": {telemetry.get("total_tokens", 0)} | libx264 yuv420p 1920x1080 @ 10fps'),
+        ("ok", "[done] artifacts/cortensor_hackathon5_demo.mp4 ready (MIT Licensed, reproducible offline & live)."),
     ]
 
 
@@ -670,6 +688,26 @@ def _draw_live_terminal_console(
         ly += 27
 
 
+def _scene_model_label(
+    scene_idx: int,
+    *,
+    audit: Mapping[str, Any],
+    probe: Mapping[str, Any],
+) -> str:
+    """Resolve the accurate model label shown in the header for each storyboard scene."""
+    audit_model = str(
+        (audit.get("metadata") or {}).get("calibrated_model")
+        or probe.get("model")
+        or "grok-4.6"
+    )
+    probe_model = str(probe.get("model") or "grok-4.7")
+    if scene_idx <= 4:
+        return audit_model
+    if scene_idx == 5:
+        return probe_model
+    return f"{audit_model} / {probe_model}" if audit_model != probe_model else probe_model
+
+
 def _render_scene_canvas(
     scene_idx: int,
     *,
@@ -679,8 +717,12 @@ def _render_scene_canvas(
     stage_idx: int = ANIMATION_STAGES - 1,
 ) -> Image.Image:
     stage_idx = max(0, min(ANIMATION_STAGES - 1, int(stage_idx)))
-    cal_status = str(probe.get("calibration_status") or "[Loopback Stub Baseline]")
-    model = str(probe.get("model") or "grok-4.6")
+    cal_status = str(
+        ((audit.get("metadata") or {}).get("calibration_status") if scene_idx <= 4 else None)
+        or probe.get("calibration_status")
+        or "[Loopback Stub Baseline]"
+    )
+    model = _scene_model_label(scene_idx, audit=audit, probe=probe)
     sdk_version = str(probe.get("sdk_version") or "0.1.21")
     canvas = _draw_chrome(
         scene_idx,
@@ -701,7 +743,12 @@ def _render_scene_canvas(
 
     if scene_idx == 0:
         _draw_card(draw, (56, 172, 920, 696), outline="#38BDF8")
-        draw.text((84, 192), "Architecture & Threat Model / 安全边界与设计目标", font=fonts.h2, fill="#38BDF8")
+        draw.text(
+            (84, 192),
+            _fit_single_line(draw, "Architecture & Threat Model — Zero-Key Isolation", fonts.h2, 804),
+            font=fonts.h2,
+            fill="#38BDF8",
+        )
         bullets = [
             "1. Zero-Key Disk Isolation: APIRuntime.from_config_path writes api_key='' to .openminion/agents.json; API keys stay strictly in env vars.",
             "2. Provider-Agnostic Switching: Presets for openai-compatible, cortensor-portal (/api/v2 & OpenAI), and cortensor-router.",
@@ -974,16 +1021,19 @@ def _render_scene_canvas(
 
         _draw_card(draw, (1140, 172, 1864, 696), outline="#38BDF8")
         draw.text((1168, 190), "One-Command Reproducibility", font=fonts.h2, fill="#38BDF8")
-        probe_model = str(probe.get("model") or "grok-4.7")
+        audit_model = _scene_model_label(0, audit=audit, probe=probe)
+        probe_model = _scene_model_label(5, audit=audit, probe=probe)
+        claim_id = str(audit.get("claim_id") or "delphi-btc-etf-2024")
+        preset = str(audit.get("preset") or probe.get("preset") or "openai-compatible")
         cmds = [
             "# 1. Probe all 10 OpenMinion primitives & export docs",
-            "cortensor-verifier probe --preset openai-compatible \\",
+            f"cortensor-verifier probe --preset {preset} \\",
             f"  --model {probe_model} --timeout-seconds 180 --export-docs",
             "",
             "# 2. Dual-pass consensus audit w/ Handoff gate",
-            "cortensor-verifier audit --claim-id delphi-btc-etf-2024 \\",
-            "  --multi-pass --session-id demo-01 --publish \\",
-            "  --approval-mode allow_once",
+            f"cortensor-verifier audit --claim-id {claim_id} \\",
+            f"  --preset {preset} --model {audit_model} --multi-pass \\",
+            "  --session-id demo-01 --publish --approval-mode allow_once",
             "",
             "# 3. Render 75s captioned 1080p walkthrough",
             "cortensor-verifier render-demo \\",
@@ -998,7 +1048,7 @@ def _render_scene_canvas(
             color = "#6EE7B7" if line.startswith("#") else "#E2E8F0"
             draw.text((1168, cy), _fit_single_line(draw, line, fonts.mono_sm, 672), font=fonts.mono_sm, fill=color)
             cy += 29
-        draw.text((1168, 654), "Repo kept PRIVATE until manual PR readiness review.", font=fonts.tiny, fill="#94A3B8")
+        draw.text((1168, 654), "MIT Licensed · Zero Plaintext Secrets · Offline & Live Reproducible", font=fonts.tiny, fill="#94A3B8")
 
     _draw_live_terminal_console(
         draw,
@@ -1062,6 +1112,16 @@ def render_demo_video(
     )
     assert_no_plaintext_secrets(
         serialized_inputs,
+        secret_env_names=secret_env_names,
+        extra_secrets=extra_secrets,
+    )
+    terminal_dump = "\n".join(
+        line
+        for s_idx in range(TOTAL_SCENES)
+        for _, line in _build_scene_terminal_lines(s_idx, audit=audit_bundle, probe=probe_report)
+    )
+    assert_no_plaintext_secrets(
+        terminal_dump,
         secret_env_names=secret_env_names,
         extra_secrets=extra_secrets,
     )
@@ -1136,6 +1196,6 @@ def render_demo_video(
         scene_count=TOTAL_SCENES,
         file_size_bytes=target_path.stat().st_size,
         calibration_status=str(probe_report.get("calibration_status") or ""),
-        model=str(probe_report.get("model") or ""),
+        model=_scene_model_label(6, audit=audit_bundle, probe=probe_report),
         claim_id=str(audit_bundle.get("claim_id") or ""),
     )
