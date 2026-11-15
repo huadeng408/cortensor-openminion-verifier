@@ -1619,7 +1619,398 @@ def render_building_blocks_tested_md(report: ProbeSuiteReport) -> str:
         lines.append(f"- **Metadata**: `{meta_json}`")
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    return scrub_secrets("\n".join(lines).rstrip() + "\n")
+
+
+def _format_present_meta(meta: dict[str, Any], keys: Sequence[str]) -> str:
+    """Format only keys actually present in probe metadata (never emit fallback defaults)."""
+    parts = [f"{k}={meta[k]!r}" if isinstance(meta[k], (list, dict)) else f"{k}={meta[k]}" for k in keys if k in meta]
+    return f" (`{', '.join(parts)}`)" if parts else ""
+
+
+def _render_what_worked_cleanly_lines(report: ProbeSuiteReport) -> list[str]:
+    """Render factual summary bullets derived exclusively from passed probes."""
+    passed = {item.probe_id: item for item in report.probes if item.passed}
+    lines = ["## What Worked Cleanly in OpenMinion 0.1", ""]
+    if not passed:
+        lines.append("- No building-block probes passed in this run.")
+        lines.append("")
+        return lines
+
+    if "agent_runtime_isolation" in passed:
+        meta = passed["agent_runtime_isolation"].metadata
+        suffix = _format_present_meta(meta, ("db_count", "secret_free_config", "run_id"))
+        lines.append(
+            "- **`APIRuntime` isolation & zero-key disk posture**: "
+            "`create_isolated_runtime()` / `APIRuntime.from_config_path()` bound per-worktree "
+            "SQLite stores and persisted `agents.json` with zero plaintext API keys or env secrets"
+            f"{suffix}."
+        )
+
+    if "structured_pydantic_output" in passed:
+        meta = passed["structured_pydantic_output"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("status", "score", "negative_validation_error", "fallback_stub_used"),
+        )
+        lines.append(
+            "- **Typed Pydantic coercion & validation contract**: "
+            "`Agent._coerce_output()` / `_extract_json_object()` validated `BaseModel` schemas cleanly "
+            "and raised `AgentOutputValidationError` on non-JSON outputs"
+            f"{suffix}."
+        )
+
+    if "tool_and_forced_tools" in passed:
+        meta = passed["tool_and_forced_tools"].metadata
+        suffix = _format_present_meta(meta, ("forced_tool", "invocations"))
+        lines.append(
+            "- **Scoped `min_scope='READ_ONLY'` `@tool` binding & `tool_choice='forced'`**: "
+            "Read-only verifier tools registered with `idempotent=True` executed without workspace "
+            "mutations, and `forced_tools` enforced deterministic single-tool dispatch"
+            f"{suffix}."
+        )
+
+    if "policy_confirmation_gate" in passed:
+        meta = passed["policy_confirmation_gate"].metadata
+        suffix = _format_present_meta(
+            meta,
+            (
+                "callback_count",
+                "allow_executed",
+                "deny_blocked",
+                "pause_blocked",
+                "resume_executed",
+                "pending_confirmation_id",
+            ),
+        )
+        lines.append(
+            "- **Fail-closed confirmation gate & pause/resume**: "
+            "`@tool(dangerous=True, min_scope='WRITE_SAFE')` honored boolean `approval_callback` "
+            "(allow/deny) and paused fail-closed on `approval_callback=None` until resumed via "
+            "`Agent.run('allow_once', session_id=..., thread_id=...)`"
+            f"{suffix}."
+        )
+
+    if "agent_handoff" in passed:
+        meta = passed["agent_handoff"].metadata
+        suffix = _format_present_meta(meta, ("tool_name", "handoff_invocations", "run_id"))
+        lines.append(
+            "- **Peer `Handoff` transfer + target `PolicyGrantInput` gating**: "
+            "`Handoff` compiled `transfer_to_*` delegation tools to route across peer `Agent` "
+            "runtimes, pairing cleanly with target-runtime `PolicyGrantInput(max_uses=1)` for "
+            "fail-closed confirmation-gated publication"
+            f"{suffix}."
+        )
+
+    if "session_continuity" in passed:
+        meta = passed["session_continuity"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("same_session_recalled", "second_session_isolated", "session_a", "session_b", "thread_id"),
+        )
+        lines.append(
+            "- **Cross-session isolation & explicit `thread_id` continuity**: "
+            "Forwarding `thread_id` alongside `session_id` preserved multi-turn recall while "
+            "distinct sessions remained strictly isolated"
+            f"{suffix}."
+        )
+
+    if "memory_bundle_portability" in passed:
+        meta = passed["memory_bundle_portability"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("bundle_version", "item_count", "invalid_mode_rejected"),
+        )
+        lines.append(
+            "- **`MemoryBundle` portability & schema validation**: "
+            "`export_bundle()` -> `save_bundle()` -> `load_bundle()` -> `import_bundle()` "
+            "roundtripped portable state across runtimes and raised `InvalidArgumentError` on "
+            "invalid trust modes"
+            f"{suffix}."
+        )
+
+    if "subagent_delegation" in passed:
+        meta = passed["subagent_delegation"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("context_id", "parent_transcript_inherited", "tool_allowlist", "subagent_calls"),
+        )
+        lines.append(
+            "- **Isolated `subagent()` & `SubagentRunContext` execution**: "
+            "Child subagents executed with scoped `tool_allowlist` and `parent_transcript_inherited=False`, "
+            "and `child.close()` left the parent `APIRuntime` open"
+            f"{suffix}."
+        )
+
+    if "submit_turn_streaming_telemetry" in passed:
+        meta = passed["submit_turn_streaming_telemetry"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("chunk_count", "duration_ms", "stats_input_tokens", "stats_output_tokens"),
+        )
+        lines.append(
+            "- **`APIRuntime.submit_turn()` `TurnChunk` SSE streaming**: "
+            "`RuntimeTurnHandle.stream()` delivered ordered `TurnChunk` status and `final_text` "
+            "events alongside populated `TurnResponse.stats` usage counters"
+            f"{suffix}."
+        )
+
+    if "error_and_timeout_contracts" in passed:
+        meta = passed["error_and_timeout_contracts"].metadata
+        suffix = _format_present_meta(
+            meta,
+            ("http_500_attempts", "timeout_exception", "http_connection_reuse_enabled"),
+        )
+        lines.append(
+            "- **Deterministic error, timeout & wire-adapter contracts**: "
+            "Exhausted retries raised `ProviderError`, exceeded turn deadlines raised `TurnTimeoutError`, "
+            "`http_connection_reuse_enabled=False` avoided Windows keep-alive pool stalls, and "
+            "`AnthropicProvider` / `CortensorProvider` / `OpenAIProvider` wire checks passed"
+            f"{suffix}."
+        )
+
+    lines.append("")
+    return lines
+
+
+def _render_rough_edges_lines(report: ProbeSuiteReport) -> list[str]:
+    """Render verified SDK rough edges and any failed probes observed during calibration."""
+    passed = {item.probe_id: item for item in report.probes if item.passed}
+    failed = [item for item in report.probes if not item.passed]
+    lines = ["## What Broke & Rough Edges Encountered", ""]
+
+    for item in failed:
+        lines.append(
+            f"- **Probe failure (`{item.probe_id}`)**: {item.detail}"
+        )
+
+    sess_meta = passed["session_continuity"].metadata if "session_continuity" in passed else {}
+    sess_note = (
+        f" (verified with `thread_id={sess_meta['thread_id']}`)"
+        if "thread_id" in sess_meta
+        else ""
+    )
+    lines.append(
+        "- **Implicit new thread per `Agent.run(session_id=...)` without explicit `thread_id`**: "
+        "`Agent._build_payload()` (`openminion/api/agent.py:167-170`) omits `inbound_metadata['thread_id']` "
+        "unless `thread_id` is passed explicitly, so `resolve_thread_routing_decision()` "
+        "(`openminion/modules/task/run/status.py:532-539`) treats subsequent turns on a settled "
+        "session as `settled_without_resume` and forks a fresh `thread_id`"
+        f"{sess_note}."
+    )
+
+    stream_meta = (
+        passed["submit_turn_streaming_telemetry"].metadata
+        if "submit_turn_streaming_telemetry" in passed
+        else {}
+    )
+    if (
+        "tokens_in" in stream_meta
+        and "tokens_out" in stream_meta
+        and "stats_input_tokens" in stream_meta
+        and "stats_output_tokens" in stream_meta
+    ):
+        stream_observed = (
+            f" (`tokens_in={stream_meta['tokens_in']}`, `tokens_out={stream_meta['tokens_out']}` vs "
+            f"`TurnResponse.stats` `input_tokens={stream_meta['stats_input_tokens']}`, "
+            f"`output_tokens={stream_meta['stats_output_tokens']}`, "
+            f"`telemetry_metadata_mismatch={stream_meta.get('telemetry_metadata_mismatch')}`)"
+        )
+    else:
+        stream_observed = ""
+    lines.append(
+        "- **`TurnTelemetry` token-zero mismatch vs `TurnResponse.stats`**: "
+        "`_turn_success_response()` (`openminion/services/runtime/daemon.py:549-555`) populates "
+        "`TurnTelemetry.tokens_in/tokens_out` from `metadata.get('usage_prompt_tokens')` and "
+        "`metadata.get('usage_completion_tokens')`, whereas brain post-execution writes "
+        "`total_input_tokens_used` / `total_output_tokens_used` and `turn_result.stats`"
+        f"{stream_observed}."
+    )
+
+    handoff_meta = passed["agent_handoff"].metadata if "agent_handoff" in passed else {}
+    handoff_note = (
+        f" (`verbatim_ack={handoff_meta['verbatim_ack']}` in live calibration as coordinators "
+        "paraphrase specialist text)"
+        if "verbatim_ack" in handoff_meta
+        else ""
+    )
+    lines.append(
+        "- **`handoff.target.run(message)` timeout & approval omission**: "
+        "`build_delegate_tool()` (`openminion/api/handoff.py:168-170`) invokes "
+        "`handoff.target.run(message)` without forwarding caller `timeout_seconds` (falling back "
+        "to the `90.0s` default in `openminion/base/config/runtime/__init__.py:73`) or "
+        "`approval_callback`, forcing target runtimes to rely on pre-issued `PolicyGrantInput(max_uses=1)`"
+        f"{handoff_note}."
+    )
+
+    err_meta = (
+        passed["error_and_timeout_contracts"].metadata
+        if "error_and_timeout_contracts" in passed
+        else {}
+    )
+    wire = err_meta.get("provider_wire_formats") if isinstance(err_meta.get("provider_wire_formats"), dict) else {}
+    if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
+        sse_note = (
+            f" (`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
+            f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)"
+        )
+    else:
+        sse_note = ""
+    lines.append(
+        "- **SSE `usage` chunk suppression without `service_vendor='openai'`**: "
+        "`OpenAIProvider.stream()` (`openminion/modules/llm/providers/openai/adapter.py:901-907, 961`) "
+        "sets `preserve_response_facts=False` unless `service_vendor == 'openai'` or a compat "
+        "dialect overrides it, causing `_iter_openai_stream_events()` (`adapter.py:505-524`) to "
+        "skip final `usage`, `finish_reason`, and tool-call deltas for OpenAI-compatible relays"
+        f"{sse_note}."
+    )
+
+    sub_meta = passed["subagent_delegation"].metadata if "subagent_delegation" in passed else {}
+    sub_note = (
+        f" (isolated `context_id={sub_meta['context_id']}`)"
+        if "context_id" in sub_meta
+        else ""
+    )
+    lines.append(
+        "- **Sequential `subagent()` `task_update` state collision & `90.0s` timeout fallback**: "
+        "`resolve_entry_task_update()` (`openminion/modules/brain/loop/context/task_context.py:173-191`) "
+        "raises `ValueError('Missing task_update for a clarification or active request')` or "
+        "`ValueError('Exactly one task_update is allowed per entry response')` when sequential "
+        "subagent passes share session task state or emit batched entry tool calls, while omitting "
+        "explicit `timeout_seconds` falls back to the `90.0s` runtime default (`services/runtime/daemon.py:307`)"
+        f"{sub_note}."
+    )
+
+    if "http_500_attempts" in err_meta:
+        lines.append(
+            "- **Layered HTTP 500 retry multiplication & Windows connection reuse**: "
+            f"With `http_connection_reuse_enabled={err_meta.get('http_connection_reuse_enabled')}`, "
+            f"`provider_retry_max_attempts=2` multiplied by transport retries produced "
+            f"`http_500_attempts={err_meta['http_500_attempts']}` before raising `ProviderError`."
+        )
+
+    lines.append(
+        "- **Internal `submit_output` classifier turns & `agent_id:` reply prefix**: "
+        "OpenMinion issues internal `FreshnessContract`, `FinalizationStatus`, and `ClosureJudgment` "
+        "(`tool_choice='submit_output'`) turns requiring `action_summary` preservation in gateways/stubs, "
+        "and prefixes replies with `f'{agent_id}: '`, requiring `_extract_json_object()` recovery."
+    )
+    lines.append("")
+    return lines
+
+
+def _render_improvement_proposals_lines(report: ProbeSuiteReport) -> list[str]:
+    """Render structured upstream SDK improvement proposals with Repro and Expected vs. Actual."""
+    passed = {item.probe_id: item for item in report.probes if item.passed}
+    stream_meta = (
+        passed["submit_turn_streaming_telemetry"].metadata
+        if "submit_turn_streaming_telemetry" in passed
+        else {}
+    )
+    if (
+        "tokens_in" in stream_meta
+        and "tokens_out" in stream_meta
+        and "stats_input_tokens" in stream_meta
+        and "stats_output_tokens" in stream_meta
+    ):
+        telemetry_actual = (
+            f"Expected `TurnTelemetry` to match `TurnResponse.stats`; actual run emitted "
+            f"`TurnTelemetry(tokens_in={stream_meta['tokens_in']}, tokens_out={stream_meta['tokens_out']})` "
+            f"alongside `stats(input_tokens={stream_meta['stats_input_tokens']}, "
+            f"output_tokens={stream_meta['stats_output_tokens']})`."
+        )
+    else:
+        telemetry_actual = (
+            "Expected `TurnTelemetry.tokens_in/tokens_out` to match `TurnResponse.stats` token totals; "
+            "actual `TurnTelemetry` resolves to `(0, 0)` whenever `metadata` lacks `usage_prompt_tokens` / "
+            "`usage_completion_tokens`."
+        )
+
+    err_meta = (
+        passed["error_and_timeout_contracts"].metadata
+        if "error_and_timeout_contracts" in passed
+        else {}
+    )
+    wire = err_meta.get("provider_wire_formats") if isinstance(err_meta.get("provider_wire_formats"), dict) else {}
+    if "openai_sse_usage_without_vendor" in wire and "openai_sse_usage_with_vendor" in wire:
+        sse_actual = (
+            f"Expected SSE `done` event `usage` to be parsed for all OpenAI-compatible SSE streams; "
+            f"actual `done.usage` was `None` without `service_vendor='openai'` "
+            f"(`openai_sse_usage_without_vendor={wire['openai_sse_usage_without_vendor']}` vs "
+            f"`openai_sse_usage_with_vendor={wire['openai_sse_usage_with_vendor']}`)."
+        )
+    else:
+        sse_actual = (
+            "Expected SSE `done` event `usage` and tool deltas to be parsed for any OpenAI-compatible relay; "
+            "actual `_iter_openai_stream_events()` drops them whenever `preserve_response_facts=False`."
+        )
+
+    proposals: list[tuple[str, str, str, str, str]] = [
+        (
+            "1. Populate `TurnTelemetry` Token Counts from `turn_result.stats` / `total_*_tokens_used`",
+            "`openminion/services/runtime/daemon.py:549-555` (`_turn_success_response`)",
+            "`handle = runtime.submit_turn({'session_id': ..., 'message': ..., 'stream': True}); resp = handle.result()`",
+            telemetry_actual,
+            "Read `turn_result.stats.input_tokens` / `output_tokens` first (falling back to "
+            "`metadata.get('usage_prompt_tokens') or metadata.get('total_input_tokens_used')` and "
+            "`metadata.get('usage_completion_tokens') or metadata.get('total_output_tokens_used')`).",
+        ),
+        (
+            "2. Forward `timeout_seconds` & Approval Context in `Handoff` / `build_delegate_tool()`",
+            "`openminion/api/handoff.py:168-170` (`build_delegate_tool._handler_fn`)",
+            "`Agent(handoffs=[Handoff(target=specialist)]).run('...', timeout_seconds=180, approval_callback=cb)`",
+            "Expected `handoff.target.run(message)` to honor caller `timeout_seconds` and confirmation "
+            "policy; actual call invokes `handoff.target.run(message)` bare, silently reverting to the "
+            "`90.0s` runtime default and omitting caller `approval_callback`.",
+            "Add optional `timeout_seconds` and `approval_callback` forwarding fields on `Handoff` "
+            "(defaulting to the active caller run context when unset) and pass them inside `build_delegate_tool()`.",
+        ),
+        (
+            "3. Guard `resolve_entry_task_update()` Against Shared-Session `subagent()` & Parallel Tool Calls",
+            "`openminion/modules/brain/loop/context/task_context.py:173-191` (`resolve_entry_task_update`)",
+            "Run two sequential `subagent(parent, ...)` passes sharing a session or emitting parallel entry tool calls.",
+            "Expected each independent subagent turn or multi-tool entry response to execute cleanly; "
+            "actual `resolve_entry_task_update()` raises `ValueError('Missing task_update for a clarification "
+            "or active request')` or `ValueError('Exactly one task_update is allowed per entry response')`, "
+            "detouring into `invalid_task_context_update` clarify prompts.",
+            "Deduplicate identical `task_update` sidecar patches across parallel entry tool calls, and avoid "
+            "inheriting prior-run `resolved_task_context` when entering an isolated `SubagentRunContext`.",
+        ),
+        (
+            "4. Explicit Session Thread Continuity Option on `Agent.run(session_id=...)`",
+            "`openminion/api/agent.py:167-170` & `openminion/modules/task/run/status.py:532-539`",
+            "`agent.run('Remember token X', session_id='s1'); agent.run('Recall token', session_id='s1')`",
+            "Expected consecutive `Agent.run(..., session_id='s1')` calls to share conversation history; "
+            "actual second turn lacks `inbound_metadata['thread_id']`, hits `settled_without_resume`, and "
+            "forks a brand-new thread with zero recall unless callers manually thread `result.thread_id`.",
+            "Expose `resume_latest_thread: bool = True` (or `continue_session`) on `Agent.run()` / "
+            "`Agent._build_payload()` or clearly document mandatory `thread_id` propagation in SDK guides.",
+        ),
+        (
+            "5. Preserve OpenAI SSE `usage` & Tool Deltas Regardless of Relay `service_vendor`",
+            "`openminion/modules/llm/providers/openai/adapter.py:901-907, 961` & `505-524`",
+            "`OpenAIProvider().stream(req, {'base_url': 'https://custom-relay/v1', 'api_key': ..., 'model': ...})`",
+            sse_actual,
+            "Decouple SSE `usage` / `finish_reason` extraction in `_iter_openai_stream_events()` from "
+            "`stream_contract_enabled` (only gate outbound `tools`/`tool_choice` on `stream_contract_enabled` "
+            "while always parsing `chunk.get('usage')` when present in SSE frames).",
+        ),
+    ]
+
+    lines = ["## Actionable SDK Improvement Proposals (Repro + Expected vs. Actual)", ""]
+    for heading, target, repro, exp_actual, fix in proposals:
+        lines.extend(
+            [
+                f"### {heading}",
+                "",
+                f"- **Target Module**: {target}",
+                f"- **Minimal Repro**: {repro}",
+                f"- **Expected vs. Actual**: {exp_actual}",
+                f"- **Recommended Upstream Fix**: {fix}",
+                "",
+            ]
+        )
+    return lines
 
 
 def render_what_we_learned_md(report: ProbeSuiteReport) -> str:
@@ -1633,9 +2024,11 @@ def render_what_we_learned_md(report: ProbeSuiteReport) -> str:
         f"(`preset={report.preset}`, `model={report.model}`, `endpoint={report.base_url_host}`, "
         f"`{report.passed_probes}/{report.total_probes}` passed in `{report.total_latency_ms:.2f} ms`).",
         "",
-        "## Empirical SDK & DX Findings",
-        "",
     ]
+    lines.extend(_render_what_worked_cleanly_lines(report))
+    lines.extend(_render_rough_edges_lines(report))
+    lines.extend(_render_improvement_proposals_lines(report))
+    lines.extend(["## Empirical SDK & DX Findings", ""])
     for idx, finding in enumerate(report.dx_findings, start=1):
         lines.append(f"### {idx}. {finding['title']}")
         lines.append("")
@@ -1656,7 +2049,7 @@ def render_what_we_learned_md(report: ProbeSuiteReport) -> str:
         summary_pairs = ", ".join(f"{k}={v}" for k, v in sorted(probe.metadata.items()))
         lines.append(f"| `{probe.probe_id}` | {status} | {latency} | `{summary_pairs}` |")
 
-    return "\n".join(lines).rstrip() + "\n"
+    return scrub_secrets("\n".join(lines).rstrip() + "\n")
 
 
 def export_probe_docs(

@@ -22,6 +22,8 @@ from cortensor_verifier.probe import (
     build_empirical_dx_findings,
     export_probe_docs,
     infer_calibration_status,
+    render_building_blocks_tested_md,
+    render_what_we_learned_md,
     sanitize_base_url,
 )
 from tests.conftest import (
@@ -801,4 +803,277 @@ def test_empirical_dx_findings_interpolate_actual_probe_metadata_without_fallbac
         "tool_allowlist=['probe_subagent_tool']",
     ):
         assert expected in fixture_observations
+
+
+def _extract_markdown_section(markdown: str, heading: str) -> str:
+    marker = f"## {heading}"
+    assert marker in markdown, f"Missing markdown section {marker!r}"
+    after = markdown.split(marker, 1)[1]
+    next_idx = after.find("\n## ")
+    return after if next_idx == -1 else after[:next_idx]
+
+
+def test_render_what_we_learned_includes_what_worked_cleanly_from_passed_probes() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "calibrated_sample_run.json"
+    raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+    report = ProbeSuiteReport.model_validate(raw["probe_report"])
+
+    rendered = render_what_we_learned_md(report)
+    assert "## Empirical SDK & DX Findings" in rendered
+    assert "## Observed Runtime Measurements" in rendered
+
+    worked = _extract_markdown_section(rendered, "What Worked Cleanly in OpenMinion 0.1")
+    for expected in (
+        "APIRuntime",
+        "secret_free_config=True",
+        "min_scope='READ_ONLY'",
+        "tool_choice='forced'",
+        "MemoryBundle",
+        "second_session_isolated=True",
+        "Handoff",
+        "PolicyGrantInput",
+        "pause_blocked=True",
+        "resume_executed=True",
+        "TurnChunk",
+        "Pydantic",
+        "negative_validation_error=True",
+    ):
+        assert expected in worked
+
+    # Subset fidelity: unexecuted or failed probes must not leak into What Worked Cleanly
+    subset_probes = [
+        p
+        for p in report.probes
+        if p.probe_id in {"agent_runtime_isolation", "memory_bundle_portability"}
+    ] + [
+        ProbeCheckResult(
+            probe_id="tool_and_forced_tools",
+            name="Forced tools",
+            passed=False,
+            detail="Simulated failure",
+        )
+    ]
+    subset_report = ProbeSuiteReport(
+        sdk_version=report.sdk_version,
+        preset=report.preset,
+        model=report.model,
+        base_url_host=report.base_url_host,
+        calibration_status=report.calibration_status,
+        generated_at=report.generated_at,
+        total_probes=len(subset_probes),
+        passed_probes=2,
+        failed_probes=1,
+        total_latency_ms=10.0,
+        probes=subset_probes,
+        dx_findings=build_empirical_dx_findings(subset_probes),
+    )
+    subset_worked = _extract_markdown_section(
+        render_what_we_learned_md(subset_report),
+        "What Worked Cleanly in OpenMinion 0.1",
+    )
+    assert "APIRuntime" in subset_worked
+    assert "MemoryBundle" in subset_worked
+    assert "tool_choice='forced'" not in subset_worked
+    assert "TurnChunk" not in subset_worked
+
+    # Zero passed probes must not fabricate clean-run bullets
+    empty_report = subset_report.model_copy(
+        update={"probes": [], "total_probes": 0, "passed_probes": 0, "failed_probes": 0, "dx_findings": []}
+    )
+    empty_worked = _extract_markdown_section(
+        render_what_we_learned_md(empty_report),
+        "What Worked Cleanly in OpenMinion 0.1",
+    )
+    assert "APIRuntime" not in empty_worked
+    assert "no building-block probes passed" in empty_worked.lower()
+
+
+def test_render_what_we_learned_includes_what_broke_and_rough_edges() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "calibrated_sample_run.json"
+    raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+    report = ProbeSuiteReport.model_validate(raw["probe_report"])
+
+    rendered = render_what_we_learned_md(report)
+    rough = _extract_markdown_section(rendered, "What Broke & Rough Edges Encountered")
+    for expected in (
+        "Agent.run",
+        "thread_id",
+        "TurnTelemetry",
+        "TurnResponse.stats",
+        "tokens_in=0",
+        "input_tokens=11841",
+        "handoff.target.run",
+        "handoff.py:168-170",
+        "service_vendor",
+        "task_update",
+        "task_context.py:173-191",
+        "90.0s",
+        "http_500_attempts=6",
+    ):
+        assert expected in rough
+
+    # Failed probes in a run must also surface factually without fabricating passed telemetry
+    failing_report = ProbeSuiteReport(
+        sdk_version=report.sdk_version,
+        preset=report.preset,
+        model=report.model,
+        base_url_host=report.base_url_host,
+        calibration_status=report.calibration_status,
+        generated_at=report.generated_at,
+        total_probes=1,
+        passed_probes=0,
+        failed_probes=1,
+        total_latency_ms=42.0,
+        probes=[
+            ProbeCheckResult(
+                probe_id="agent_handoff",
+                name="Handoff Peer Agent Transfer Tool",
+                passed=False,
+                detail="FAILED (TurnTimeoutError): handoff exceeded 90s default",
+                latency_ms=42.0,
+                metadata={"error_type": "TurnTimeoutError"},
+            )
+        ],
+        dx_findings=[],
+    )
+    failing_rough = _extract_markdown_section(
+        render_what_we_learned_md(failing_report),
+        "What Broke & Rough Edges Encountered",
+    )
+    assert "agent_handoff" in failing_rough
+    assert "TurnTimeoutError" in failing_rough
+    assert "input_tokens=11841" not in failing_rough
+
+
+def test_render_what_we_learned_includes_actionable_proposals_and_passes_secret_check() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "calibrated_sample_run.json"
+    raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+    report = ProbeSuiteReport.model_validate(raw["probe_report"])
+
+    rendered = render_what_we_learned_md(report)
+    assert_no_plaintext_secrets(rendered)
+
+    proposals = _extract_markdown_section(
+        rendered,
+        "Actionable SDK Improvement Proposals (Repro + Expected vs. Actual)",
+    )
+    assert proposals.count("**Target Module**:") >= 5
+    assert proposals.count("**Minimal Repro**:") >= 5
+    assert proposals.count("**Expected vs. Actual**:") >= 5
+    assert proposals.count("**Recommended Upstream Fix**:") >= 5
+
+    for expected in (
+        "openminion/services/runtime/daemon.py:549-555",
+        "openminion/api/handoff.py:168-170",
+        "openminion/modules/brain/loop/context/task_context.py:173-191",
+        "openminion/api/agent.py:167-170",
+        "openminion/modules/llm/providers/openai/adapter.py:901-907",
+    ):
+        assert expected in proposals
+
+
+def test_export_probe_docs_scrubs_secrets_in_new_dx_sections(tmp_path: Path) -> None:
+    pattern_secret = "sk-live-pattern-secret-1234567890"
+    custom_secret = "custom_extra_token_val_987654"
+    report = ProbeSuiteReport(
+        sdk_version="0.1.21",
+        preset="openai-compatible",
+        model="stub-model",
+        base_url_host="http://127.0.0.1:49999/v1",
+        calibration_status="[Stubbed Scrub Verification]",
+        generated_at="2026-11-15T00:00:00+00:00",
+        total_probes=2,
+        passed_probes=1,
+        failed_probes=1,
+        total_latency_ms=40.0,
+        probes=[
+            ProbeCheckResult(
+                probe_id="session_continuity",
+                name="Session Memory & Thread Continuity",
+                passed=True,
+                detail=f"Completed with token {pattern_secret}",
+                latency_ms=20.0,
+                metadata={
+                    "recalled_token": True,
+                    "thread_id": f"thr-{pattern_secret}",
+                    "continuity_calls": 2,
+                },
+            ),
+            ProbeCheckResult(
+                probe_id="agent_handoff",
+                name="Handoff Peer Agent Transfer Tool",
+                passed=False,
+                detail=f"FAILED (RuntimeError): auth leak {custom_secret}",
+                latency_ms=20.0,
+                metadata={"error_type": f"Err-{custom_secret}"},
+            ),
+        ],
+        dx_findings=[],
+    )
+
+    direct_rendered = render_what_we_learned_md(report)
+    assert pattern_secret not in direct_rendered
+    assert "[REDACTED_SECRET]" in _extract_markdown_section(
+        direct_rendered,
+        "What Worked Cleanly in OpenMinion 0.1",
+    )
+
+    _, learned_path = export_probe_docs(
+        report,
+        docs_dir=tmp_path / "docs",
+        extra_secrets=[custom_secret],
+    )
+    exported_text = learned_path.read_text(encoding="utf-8")
+    assert pattern_secret not in exported_text
+    assert custom_secret not in exported_text
+    assert_no_plaintext_secrets(exported_text, extra_secrets=[custom_secret])
+    worked_section = _extract_markdown_section(exported_text, "What Worked Cleanly in OpenMinion 0.1")
+    broke_section = _extract_markdown_section(exported_text, "What Broke & Rough Edges Encountered")
+    assert "[REDACTED_SECRET]" in worked_section
+    assert "[REDACTED_SECRET]" in broke_section
+
+
+def test_checked_in_probe_docs_match_calibrated_sample_deterministically() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    sample = json.loads((repo_root / "fixtures" / "calibrated_sample_run.json").read_text(encoding="utf-8"))
+    report = ProbeSuiteReport.model_validate(sample["probe_report"])
+
+    expected_learned = render_what_we_learned_md(report)
+    expected_tested = render_building_blocks_tested_md(report)
+
+    actual_learned = (repo_root / "docs" / "WHAT_WE_LEARNED.md").read_text(encoding="utf-8")
+    actual_tested = (repo_root / "docs" / "BUILDING_BLOCKS_TESTED.md").read_text(encoding="utf-8")
+
+    assert actual_learned == expected_learned
+    assert actual_tested == expected_tested
+    assert_no_plaintext_secrets(actual_learned)
+    assert_no_plaintext_secrets(actual_tested)
+
+
+def test_upstream_openminion_bonus_drafts_are_complete_and_secret_free() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    drafts_path = repo_root / "docs" / "UPSTREAM_OPENMINION_BONUS_DRAFTS.md"
+    assert drafts_path.exists(), "Missing docs/UPSTREAM_OPENMINION_BONUS_DRAFTS.md"
+
+    text = drafts_path.read_text(encoding="utf-8")
+    assert_no_plaintext_secrets(text)
+    assert "openminion/openminion" in text
+    assert "0.1.21" in text
+    assert "manual human filing" in text.lower()
+    assert "Hackathon #5 Bonus Track" in text
+
+    for required_ref in (
+        "openminion/services/runtime/daemon.py",
+        "549-555",
+        "openminion/api/handoff.py",
+        "168-170",
+        "openminion/modules/brain/loop/context/task_context.py",
+        "173-191",
+        "```diff",
+    ):
+        assert required_ref in text
+
+
+
+
 
