@@ -719,3 +719,86 @@ def test_sanitize_base_url_redacts_third_party_relay_hosts_while_keeping_officia
     openai_official = sanitize_base_url("https://api.openai.com/v1")
     assert openai_official == "https://api.openai.com/v1"
     assert infer_calibration_status(openai_official) == "[Live LLM Calibrated]"
+
+
+def test_empirical_dx_findings_interpolate_actual_probe_metadata_without_fallback_defaults(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_server: ProbeLoopbackServer,
+) -> None:
+    broken_fallbacks = [
+        "calls=0",
+        "digest_seen=False",
+        "other_session_isolated=False",
+        "bundle_id=n/a",
+        "payload_keys=[]",
+        "handoff_tool_calls=0",
+        "reply_len=0",
+        "block=n/a",
+    ]
+
+    # (a) Live BuildingBlockProbeRunner run against deterministic loopback stub
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-empirical-dx-stub-123456")
+    runner = BuildingBlockProbeRunner(
+        preset="openai-compatible",
+        base_url=probe_server.base_url,
+        model="stub-model",
+        api_key_env="OPENAI_API_KEY",
+        home_root=tmp_path / "emp-home",
+        data_root=tmp_path / "emp-state",
+    )
+    report = runner.run_all()
+    assert report.passed_probes == 10
+    assert len(report.dx_findings) == 10
+
+    by_id = {item.probe_id: item for item in report.probes}
+    live_observations = "\n".join(item["observation"] for item in report.dx_findings)
+    for item in report.dx_findings:
+        for bad in broken_fallbacks:
+            assert bad not in item["observation"], (
+                f"Fallback sentinel {bad!r} leaked into {item['title']!r}: {item['observation']!r}"
+            )
+    for expected in (
+        f"db_count={by_id['agent_runtime_isolation'].metadata['db_count']}",
+        "probe_echo_tag",
+        "call_count=2",
+        "forced_invoked=True",
+        "second_session_isolated=True",
+        "item_count=1",
+        "export_bundle()",
+        "import_bundle()",
+        "handoff_invocations=1",
+        "transfer_to_specialist",
+        "subagent_calls=['subagent-check']",
+        "tool_allowlist=['probe_subagent_tool']",
+        "status=OK",
+        "score=0.99",
+        "negative_validation_error=True",
+    ):
+        assert expected in live_observations
+
+    # (b) Calibrated sample fixture probes passed directly into build_empirical_dx_findings()
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "calibrated_sample_run.json"
+    raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fixture_probes = [ProbeCheckResult(**p) for p in raw["probe_report"]["probes"]]
+    fixture_findings = build_empirical_dx_findings(fixture_probes)
+    assert len(fixture_findings) == 10
+
+    fixture_observations = "\n".join(item["observation"] for item in fixture_findings)
+    for item in fixture_findings:
+        for bad in broken_fallbacks:
+            assert bad not in item["observation"], (
+                f"Fallback sentinel {bad!r} leaked into fixture finding {item['title']!r}: {item['observation']!r}"
+            )
+    for expected in (
+        "db_count=14",
+        "probe_echo_tag",
+        "second_session_isolated=True",
+        "item_count=1",
+        "handoff_invocations=1",
+        "transfer_to_specialist",
+        "subagent_calls=['subagent-check']",
+        "tool_allowlist=['probe_subagent_tool']",
+    ):
+        assert expected in fixture_observations
+

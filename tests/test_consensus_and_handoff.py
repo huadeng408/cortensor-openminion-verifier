@@ -1010,3 +1010,189 @@ def test_cortensor_router_publisher_preserves_provider_and_avoids_double_nested_
     nested_log = state_root / ".openminion-state" / "published_verdicts.jsonl"
     assert expected_log.exists()
     assert not nested_log.exists()
+
+
+def test_session_memory_injects_prior_turn_snippets_and_import_clears_stale_pass_ids(
+    tmp_path: Path,
+    loopback_server: LoopbackLLMServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "stub-key")
+    dossier_1 = _btc_dossier()
+    dossier_2 = load_claim_dossier("delphi-eth-dencun-blobs")
+    dossier_3 = load_claim_dossier("delphi-falsified-quantum-rsa2048")
+    session_id = "sess-snippet-c5"
+
+    # Turn 1: dual-pass audit with unique per-pass in-flight tokens
+    loopback_server.enqueue(
+        json_step(
+            _pass_payload(
+                claim_id=dossier_1.claim_id,
+                pass_role="corroborator",
+                verdict="SUPPORTED",
+                confidence=0.93,
+                rationale="TURN1_CORR_INFLIGHT_ALPHA SEC filing matched.",
+                quote="TURN1_CITE_EXCERPT_MARKER",
+            )
+        )
+    )
+    loopback_server.enqueue(
+        json_step(
+            _pass_payload(
+                claim_id=dossier_1.claim_id,
+                pass_role="skeptic",
+                verdict="SUPPORTED",
+                confidence=0.89,
+                rationale="TURN1_SKEP_INFLIGHT_BETA no counter-filing found.",
+                quote="TURN1_CITE_EXCERPT_MARKER",
+            )
+        )
+    )
+
+    # Turn 2: dual-pass audit on the SAME session_id
+    loopback_server.enqueue(
+        json_step(
+            _pass_payload(
+                claim_id=dossier_2.claim_id,
+                pass_role="corroborator",
+                verdict="SUPPORTED",
+                confidence=0.91,
+                rationale="TURN2_CORR_INFLIGHT_GAMMA Dencun mainnet blobs confirmed.",
+                source_id="src-eth-dencun-eip4844",
+                quote="Dencun blobs active on mainnet.",
+            )
+        )
+    )
+    loopback_server.enqueue(
+        json_step(
+            _pass_payload(
+                claim_id=dossier_2.claim_id,
+                pass_role="skeptic",
+                verdict="SUPPORTED",
+                confidence=0.87,
+                rationale="TURN2_SKEP_INFLIGHT_DELTA beacon chain verified.",
+                source_id="src-eth-dencun-eip4844",
+                quote="Dencun blobs active on mainnet.",
+            )
+        )
+    )
+
+    def _requests_for_role(reqs: list[Any], role: str) -> list[Any]:
+        matched = []
+        for req in reqs:
+            sys_text = " ".join(
+                str(m.get("content", ""))
+                for m in req.body.get("messages", [])
+                if m.get("role") == "system"
+            ).lower()
+            if f"'{role}'" in sys_text:
+                matched.append(req)
+        return matched
+
+    with _make_auditor(tmp_path, loopback_server, name="auditor_c5") as auditor:
+        b1 = auditor.audit_claim(dossier_1, single_pass=False, session_id=session_id)
+        assert b1.consensus.final_verdict == "SUPPORTED"
+        turn1_reqs = list(loopback_server.requests)
+        t1_corr = _requests_for_role(turn1_reqs, "corroborator")
+        t1_skep = _requests_for_role(turn1_reqs, "skeptic")
+        assert t1_corr and t1_skep
+        t1_skep_blob = " ".join(json.dumps(r.body.get("messages", [])) for r in t1_skep)
+        t1_corr_blob = " ".join(json.dumps(r.body.get("messages", [])) for r in t1_corr)
+        assert "TURN1_CORR_INFLIGHT_ALPHA" not in t1_skep_blob
+        assert "TURN1_SKEP_INFLIGHT_BETA" not in t1_corr_blob
+
+        turn2_start = len(loopback_server.requests)
+        b2 = auditor.audit_claim(dossier_2, single_pass=False, session_id=session_id)
+        assert b2.consensus.final_verdict == "SUPPORTED"
+        turn2_reqs = loopback_server.requests[turn2_start:]
+        t2_corr = _requests_for_role(turn2_reqs, "corroborator")
+        t2_skep = _requests_for_role(turn2_reqs, "skeptic")
+        assert t2_corr and t2_skep
+
+        for role_reqs in (t2_corr, t2_skep):
+            user_blob = " ".join(
+                str(m.get("content", ""))
+                for r in role_reqs
+                for m in r.body.get("messages", [])
+                if m.get("role") == "user"
+            )
+            # Turn 1 verdict summary from bundle.items
+            assert dossier_1.claim_id in user_blob
+            assert "TURN1_CITE_EXCERPT_MARKER" in user_blob
+            # Concise prior recorded session_msgs snippet(s), not just message count
+            assert "Prior openminion session messages recorded:" in user_blob
+            assert "outbound:" in user_blob
+            assert "TURN1_SKEP_INFLIGHT_BETA" in user_blob
+            assert "TURN1_CORR_INFLIGHT_ALPHA" in user_blob
+
+        # Within Turn 2, corroborator and skeptic remain blind to each other's in-flight output
+        t2_skep_blob = " ".join(json.dumps(r.body.get("messages", [])) for r in t2_skep)
+        t2_corr_blob = " ".join(json.dumps(r.body.get("messages", [])) for r in t2_corr)
+        assert "TURN2_CORR_INFLIGHT_GAMMA" not in t2_skep_blob
+        assert "TURN2_SKEP_INFLIGHT_DELTA" not in t2_corr_blob
+
+        # (b) import_session_memory over an existing session_id that had pass_session_ids clears them to []
+        pre_import = auditor.export_session_memory(session_id)
+        assert len(pre_import.metadata.get("pass_session_ids", [])) >= 4
+
+        incoming_bundle = export_bundle(
+            [
+                {
+                    "id": f"{session_id}:imported:1",
+                    "session_id": session_id,
+                    "content": "Imported external verified record IMPORT_MARKER_ZETA.",
+                }
+            ],
+            metadata={
+                "session_id": session_id,
+                "item_count": 1,
+                "pass_session_ids": ["stale-imported-pass-id-999"],
+            },
+        )
+        auditor.import_session_memory(session_id, incoming_bundle)
+
+        post_import = auditor.export_session_memory(session_id)
+        assert "pass_session_ids" in post_import.metadata
+        assert post_import.metadata["pass_session_ids"] == []
+        saved_file_bundle = load_bundle(auditor._session_bundle_path(session_id))
+        assert saved_file_bundle.metadata.get("pass_session_ids") == []
+
+        # Next audit sees imported bundle item but NOT stale session_msgs from cleared pass_session_ids
+        loopback_server.enqueue(
+            json_step(
+                _pass_payload(
+                    claim_id=dossier_3.claim_id,
+                    pass_role="corroborator",
+                    verdict="REFUTED",
+                    confidence=0.95,
+                    rationale="Turn 3 corroborator refuted.",
+                    source_id="src-nist-pqc-faq",
+                    quote="No 4096-qubit break occurred.",
+                )
+            )
+        )
+        loopback_server.enqueue(
+            json_step(
+                _pass_payload(
+                    claim_id=dossier_3.claim_id,
+                    pass_role="skeptic",
+                    verdict="REFUTED",
+                    confidence=0.94,
+                    rationale="Turn 3 skeptic confirmed.",
+                    source_id="src-nist-pqc-faq",
+                    quote="No 4096-qubit break occurred.",
+                )
+            )
+        )
+        turn3_start = len(loopback_server.requests)
+        auditor.audit_claim(dossier_3, single_pass=False, session_id=session_id)
+        turn3_reqs = loopback_server.requests[turn3_start:]
+        turn3_user_blob = " ".join(
+            str(m.get("content", ""))
+            for r in turn3_reqs
+            for m in r.body.get("messages", [])
+            if m.get("role") == "user"
+        )
+        assert "IMPORT_MARKER_ZETA" in turn3_user_blob
+        assert "Prior openminion session messages recorded:" not in turn3_user_blob
+

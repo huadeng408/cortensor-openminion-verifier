@@ -486,7 +486,11 @@ class ConsensusAuditor:
 
         updated = export_bundle(
             list(merged_by_id.values()),
-            metadata={"session_id": session_id, "item_count": len(merged_by_id)},
+            metadata={
+                "session_id": session_id,
+                "item_count": len(merged_by_id),
+                "pass_session_ids": [],
+            },
         )
         bundle_path = self._session_bundle_path(session_id)
         bundle_path.parent.mkdir(parents=True, exist_ok=True)
@@ -579,6 +583,22 @@ class ConsensusAuditor:
             save_bundle(bundle, out)
         return bundle
 
+    @staticmethod
+    def _extract_session_message_snippet(msg: Any) -> str | None:
+        """Format an openminion message record or dict into a compact `role: content` snippet."""
+        if isinstance(msg, dict):
+            role = str(msg.get("role") or "message").strip()
+            raw_text = msg.get("content") or msg.get("body")
+        else:
+            role = str(getattr(msg, "role", None) or "message").strip()
+            raw_text = getattr(msg, "content", None) or getattr(msg, "body", None)
+        if not raw_text:
+            return None
+        compact = " ".join(str(raw_text).split())
+        if not compact:
+            return None
+        return f"{role}: {compact[:140]}"
+
     def _build_session_context_block(self, session_id: str | None) -> str:
         if not session_id:
             return ""
@@ -607,6 +627,13 @@ class ConsensusAuditor:
             lines.append(f"- {item.get('content', '')}")
         if session_msgs:
             lines.append(f"- Prior openminion session messages recorded: {len(session_msgs)}")
+            snippets = [
+                snippet
+                for msg in session_msgs
+                if (snippet := self._extract_session_message_snippet(msg)) is not None
+            ]
+            for snippet in snippets[-3:]:
+                lines.append(f"  - {snippet}")
         return "\n".join(lines) + "\n\n"
 
     def _build_prompt(
