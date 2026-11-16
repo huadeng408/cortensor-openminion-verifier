@@ -21,9 +21,9 @@ Complete these manual checks before posting to DoraHacks or opening the upstream
 - [ ] **Run Final Test & Secret Hygiene Check / 终检测试与零明文密钥扫描**:
   - Verify `.env`, `.openminion/`, `.openminion-state/`, `artifacts/`, and API keys remain untracked.
   - Run `.\.venv\Scripts\python.exe -m pytest -q` on `main` (`0 failed`) and confirm `assert_no_plaintext_secrets` passes cleanly.
-- [ ] **Attach Demo Video (`75s`, `1920x1080`) / 渲染并挂载 1080p 英文演示视频**:
-  - Render `artifacts/cortensor_hackathon5_demo.mp4` (`75s`, `1920x1080`, `10fps`, 100% English ASCII/Latin-safe UI & live terminal storyboard) via `cortensor-verifier render-demo`.
-  - Attach the MP4 via GitHub's video upload dropzone in the PR body and paste its public hosted video URL into the DoraHacks BUIDL submission form.
+- [x] **Demo Video (`4:06`, `1920x1080`, `30fps`, narrated + captioned) / 1080p 英文演示视频（真实模型实跑）**:
+  - Public MP4: https://github.com/huadeng408/cortensor-openminion-verifier/releases/download/v0.1.2/cortensor_hackathon5_demo.mp4 (release page: https://github.com/huadeng408/cortensor-openminion-verifier/releases/tag/v0.1.2). The live-run chapter is a timestamped replay of a real `grok-4.6` audit recorded on 2026-11-16 (`fixtures/live_run_2026-11-16_trace.jsonl`).
+  - Paste the public MP4 URL into the DoraHacks BUIDL form and the Hackathon #5 PR body.
 
 ---
 
@@ -63,6 +63,7 @@ Single-pass LLM verification hallucinates, skips counter-evidence, and risks una
 | 9 | `submit_turn_streaming_telemetry` | `submit_turn()` `TurnChunk` & `TurnTelemetry` | PASS | 6278.02 | `12` `TurnChunk`s, `stats=(11841/430)` vs `TurnTelemetry(0/0)` |
 | 10 | `error_and_timeout_contracts` | Retries, Timeout & Wire Contracts | PASS | 4765.67 | `http_500_attempts=6`, `TurnTimeoutError`, `Anthropic`/`Cortensor`/`OpenAI` SSE checks |
 
+- **Fresh Live Run Shown in Demo (2026-11-16, `grok-4.6`, `delphi-btc-etf-2024`)**: verdict `SUPPORTED`, `agreement_score=0.975`, `mean_confidence=0.925`, `corroborator (0.95)` & `skeptic (0.90)`, `Handoff allow_once` `published=True`, `23` requests / `146,855` tokens / `439.4 s` model latency. The SSRF guard refused a live `sec.gov` fetch whose hostname resolved to a non-public fake-IP (`198.18.0.177`, local proxy DNS) and both passes fell back to curated primary sources. Raw bundle: [`fixtures/live_run_2026-11-16_grok-4.6.json`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_grok-4.6.json), event trace: [`fixtures/live_run_2026-11-16_trace.jsonl`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_trace.jsonl).
 - **Dual-Pass Live Audit (`grok-4.6`, `delphi-btc-etf-2024`)**: Verdict `SUPPORTED`, `agreement_score=0.98`, `mean_confidence=0.94`, `corroborator (0.96)` & `skeptic (0.92)`, `3` read-only tool calls, `Handoff allow_once` `published=True`, `20` requests / `118,193` total tokens / `394,205 ms`.
 
 ### Reproduction Commands (MIT License)
@@ -82,7 +83,7 @@ cortensor-verifier render-demo --sample-json fixtures/calibrated_sample_run.json
 - **Empirical DX Report (`What We Learned`)**: https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/docs/WHAT_WE_LEARNED.md
 - **Upstream OpenMinion Bug & Patch Drafts (Bonus Track)**: https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/docs/UPSTREAM_OPENMINION_BONUS_DRAFTS.md
 - **Calibrated Sample Fixture**: https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/calibrated_sample_run.json
-- **Demo Walkthrough Video (`1920x1080`, `75s`, English MP4)**: `<INSERT_PUBLIC_DEMO_VIDEO_URL_FOR_cortensor_hackathon5_demo.mp4>`
+- **Demo Video (`4:06`, `1920x1080`, narrated, real live run)**: https://github.com/huadeng408/cortensor-openminion-verifier/releases/download/v0.1.2/cortensor_hackathon5_demo.mp4
 ```
 
 ---
@@ -152,6 +153,8 @@ Full technical breakdown with source locations, repro snippets, expected-vs-actu
 
 ### Reproducibility & Demo Video
 
+- Fresh live run shown in the demo (2026-11-16, `grok-4.6`, `delphi-btc-etf-2024`): verdict `SUPPORTED`, `agreement_score=0.975`, `mean_confidence=0.925`, `corroborator (0.95)` & `skeptic (0.90)`, `Handoff allow_once` `published=True`, `23` requests / `146,855` tokens / `439.4 s` model latency. The SSRF guard refused a live `sec.gov` fetch whose hostname resolved to a non-public fake-IP (`198.18.0.177`, local proxy DNS) and both passes fell back to curated primary sources. Raw bundle: [`fixtures/live_run_2026-11-16_grok-4.6.json`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_grok-4.6.json), event trace: [`fixtures/live_run_2026-11-16_trace.jsonl`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_trace.jsonl).
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
@@ -159,7 +162,7 @@ python -m venv .venv
 cortensor-verifier render-demo --sample-json fixtures/calibrated_sample_run.json --duration-seconds 75 --fps 10 -o artifacts/cortensor_hackathon5_demo.mp4
 ```
 
-- **Demo Walkthrough Video (`1920x1080`, `75s`, English Latin-safe captioned H.264 MP4)**: _[Attach rendered `artifacts/cortensor_hackathon5_demo.mp4` here via GitHub drag-and-drop when opening the PR]_
+- **Demo Video (`4:06`, `1920x1080`, narrated + captioned H.264 MP4, real live `grok-4.6` run)**: https://github.com/huadeng408/cortensor-openminion-verifier/releases/download/v0.1.2/cortensor_hackathon5_demo.mp4
 ```
 
 ---

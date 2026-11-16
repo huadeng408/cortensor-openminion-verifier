@@ -99,7 +99,7 @@ cortensor-verifier render-demo `
   -o artifacts/cortensor_hackathon5_demo.mp4
 ```
 
-The generated `artifacts/cortensor_hackathon5_demo.mp4` (`1920x1080`, `75s`, `10fps`, `750` frames) uses a **100% English ASCII/Latin-safe UI** (`Segoe UI` / `Arial` / `DejaVuSans` / `LiberationSans` / `Consolas` / `DejaVuSansMono` / `Menlo` — zero CJK font dependencies across Windows, Linux, and macOS), displays accurate per-scene model badges (`grok-4.6` across Scenes 1–5 audit passes, `grok-4.7` on Scene 6 probe matrix, and `grok-4.6 / grok-4.7` with explicit `--model` CLI flags on Scene 7), and animates a 5-line `Live Terminal Storyboard` embedding authentic `cortensor-verifier` JSON stdout keys and `TurnChunk` telemetry.
+`render-demo` produces a deterministic storyboard MP4 from a calibrated sample JSON (`1920x1080`, 100% English ASCII/Latin-safe UI, no CJK font dependencies). The narrated submission video linked above was recorded from a fresh live run instead.
 
 ### 4. Run the Verification Test Suite
 
@@ -110,6 +110,11 @@ The generated `artifacts/cortensor_hackathon5_demo.mp4` (`1920x1080`, `75s`, `10
 Loopback tests exercise real `openminion==0.1.21` objects (`APIRuntime`, `Agent`, `subagent`, `Handoff`, `MemoryBundle`, `PolicyGrantInput`, `submit_turn`) over an ephemeral loopback OpenAI/Anthropic/Cortensor HTTP stub without mocking OpenMinion internals.
 
 ---
+
+## Demo Video & Latest Live Run
+
+- **Demo video (4:06, 1080p, narrated + captioned)**: https://github.com/huadeng408/cortensor-openminion-verifier/releases/download/v0.1.2/cortensor_hackathon5_demo.mp4
+- Fresh live run shown in the demo (2026-11-16, `grok-4.6`, `delphi-btc-etf-2024`): verdict `SUPPORTED`, `agreement_score=0.975`, `mean_confidence=0.925`, `corroborator (0.95)` & `skeptic (0.90)`, `Handoff allow_once` `published=True`, `23` requests / `146,855` tokens / `439.4 s` model latency. The SSRF guard refused a live `sec.gov` fetch whose hostname resolved to a non-public fake-IP (`198.18.0.177`, local proxy DNS) and both passes fell back to curated primary sources. Raw bundle: [`fixtures/live_run_2026-11-16_grok-4.6.json`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_grok-4.6.json), event trace: [`fixtures/live_run_2026-11-16_trace.jsonl`](https://github.com/huadeng408/cortensor-openminion-verifier/blob/main/fixtures/live_run_2026-11-16_trace.jsonl).
 
 ## Live Calibrated Benchmarks (`[Live LLM Calibrated]`)
 
