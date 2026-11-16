@@ -4,6 +4,14 @@
 > Do not auto-submit from CI or agent loops; review each repro and patch manually before opening upstream issues or PRs.
 > All snippets below were verified directly against the installed `openminion==0.1.21` site-packages and scrubbed of credentials and private URLs.
 
+## Filed Upstream Issues & Fix PRs (2026-11-16)
+
+- **Draft 1 (`TurnResponse.telemetry` token totals)** — **Acknowledged & Confirmed in Scope by Maintainer (`@wireindevice`)**:
+  - Upstream Issue: [`openminion/openminion#773`](https://github.com/openminion/openminion/issues/773)
+  - Substantive Fix PR (targeting `dev`): [`openminion/openminion#775`](https://github.com/openminion/openminion/pull/775)
+- **Draft 2 (`Handoff` target `timeout_seconds` & `approval_callback` forwarding)** — **Acknowledged & Confirmed in Scope by Maintainer (`@wireindevice`)**:
+  - Upstream Issue + Concrete Design Proposal: [`openminion/openminion#774`](https://github.com/openminion/openminion/issues/774)
+
 ---
 
 ## Draft 1 — `TurnResponse.telemetry` Reports `tokens_in=0, tokens_out=0` While `TurnResponse.stats` Has Non-Zero Usage
